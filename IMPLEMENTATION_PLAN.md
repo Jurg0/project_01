@@ -58,5 +58,6 @@ This document outlines the milestones and tasks for the implementation of Projec
 - [x] Main screen during a started game session is entirely blue.
 
 ### 11. Testing and Deployment
-- [] Thoroughly test all features of the app.
-- [] Prepare the APK for manual installation.
+- [x] Thoroughly test all features of the app.
+  - [x] **Note:** Unit test for `GameSync.kt` has been fixed.
+- [x] Prepare the APK for manual installation.

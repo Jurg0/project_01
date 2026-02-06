@@ -90,7 +90,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 _connectivityStatus.postValue("Host")
             } else {
                 player = thisDevice.value?.let { Player(it, it.deviceName, false) }
-                repository.gameSync.connectTo(info.groupOwnerAddress.hostAddress)
+                repository.gameSync.connectTo(info.groupOwnerAddress.hostAddress, 8888)
                 _connectivityStatus.postValue("Connected")
             }
         }

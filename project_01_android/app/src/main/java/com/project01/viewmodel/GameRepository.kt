@@ -54,7 +54,7 @@ class GameRepository(private val application: Application) {
     lateinit var channel: WifiP2pManager.Channel
     private lateinit var broadcastReceiver: BroadcastReceiver
 
-    val gameSync = GameSync()
+    val gameSync = GameSync(SocketNetworkManager())
     val fileTransfer = FileTransfer()
     private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 

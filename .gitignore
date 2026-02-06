@@ -1,0 +1,35 @@
+# Gradle files
+.gradle/
+build/
+local.properties
+.DS_Store
+*.iml
+
+# Android specific files
+app/build/
+*.apk
+*.ap_
+*.aab
+*.aar
+*.dex
+*.class
+# Do not ignore everything in raw, but if generated files exist
+# /app/src/*/res/raw/
+
+# IDE files
+.idea/
+.vscode/
+
+# Crash dumps
+*.hprof
+
+# Local configuration files (e.g. for CI/CD)
+.env
+.env.*
+
+# macOS specific files
+.DS_Store
+
+# Temporary files
+*.tmp
+*~

@@ -10,6 +10,7 @@ import android.content.IntentFilter
 import android.net.Uri
 import android.net.wifi.p2p.WifiP2pConfig
 import android.net.wifi.p2p.WifiP2pDevice
+import android.provider.OpenableColumns
 import android.net.wifi.p2p.WifiP2pManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LiveData
@@ -168,8 +169,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 val video = videos.value?.find { it.title == request.fileName }
                 if (video != null) {
                     viewModelScope.launch {
-                        val file = File(getRealPathFromURI(video.uri))
-                        repository.fileTransfer.sendFile(request.senderAddress, request.port, file)
+                        repository.fileTransfer.sendFile(request.senderAddress, request.port, video.uri, getApplication<Application>().contentResolver)
                     }
                 }
             } else {
@@ -240,11 +240,26 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     fun addVideo(uri: Uri) {
         viewModelScope.launch {
-            val video = Video(uri, "Video ${videos.value?.size?.plus(1)}")
+            val fileName = getFileName(uri) ?: "Video ${videos.value?.size?.plus(1)}"
+            val video = Video(uri, fileName)
             val currentVideos = videos.value?.toMutableList() ?: mutableListOf()
             currentVideos.add(video)
             repository.gameSync.broadcast(currentVideos)
         }
+    }
+
+    private fun getFileName(uri: Uri): String? {
+        var name: String? = null
+        val cursor = getApplication<Application>().contentResolver.query(uri, null, null, null, null)
+        cursor?.use {
+            if (it.moveToFirst()) {
+                val displayNameIndex = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (displayNameIndex != -1) {
+                    name = it.getString(displayNameIndex)
+                }
+            }
+        }
+        return name
     }
 
     fun turnOffScreen() {
@@ -362,21 +377,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         port
     }
 
-    private suspend fun getRealPathFromURI(uri: Uri): String = withContext(Dispatchers.IO) {
-        var result = ""
-        val cursor = getApplication<Application>().contentResolver.query(uri, null, null, null, null)
-        if (cursor == null) {
-            result = uri.path.toString()
-        } else {
-            if (cursor.moveToFirst()) {
-                val idx =
-                    cursor.getColumnIndex(android.provider.MediaStore.Images.ImageColumns.DATA)
-                result = cursor.getString(idx)
-                cursor.close()
-            }
-        }
-        result
-    }
+
 
     fun onPause() {
         repository.onPause()

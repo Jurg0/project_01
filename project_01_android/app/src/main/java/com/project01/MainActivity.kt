@@ -102,6 +102,7 @@ class MainActivity : AppCompatActivity() {
             val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                 addCategory(Intent.CATEGORY_OPENABLE)
                 type = "video/*"
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             startActivityForResult(intent, 1)
         }
@@ -306,8 +307,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun updatePlayerPlaylist(videos: List<Video>) {
         val mediaItems = videos.map { video ->
-            val localFile = File(filesDir, video.title)
-            MediaItem.fromUri(Uri.fromFile(localFile))
+            MediaItem.fromUri(video.uri)
         }
         exoPlayer?.setMediaItems(mediaItems)
         exoPlayer?.prepare()
@@ -317,6 +317,7 @@ class MainActivity : AppCompatActivity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == 1 && resultCode == RESULT_OK) {
             data?.data?.also { uri ->
+                contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 gameViewModel.addVideo(uri)
             }
         }

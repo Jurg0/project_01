@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.project01.viewmodel.GameViewModelTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-02-06T20:36:06.867Z" hostname="JurgenArndt-KP9NWJPFXL" time="0.165">
-  <properties/>
-  <testcase name="game view model can be instantiated" classname="com.project01.viewmodel.GameViewModelTest" time="0.165"/>
-  <system-out><![CDATA[]]></system-out>
-  <system-err><![CDATA[]]></system-err>
-</testsuite>

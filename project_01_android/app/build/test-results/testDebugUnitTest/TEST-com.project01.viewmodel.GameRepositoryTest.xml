@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.project01.viewmodel.GameRepositoryTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-02-06T20:36:03.873Z" hostname="JurgenArndt-KP9NWJPFXL" time="2.471">
-  <properties/>
-  <testcase name="peerListListener updates players" classname="com.project01.viewmodel.GameRepositoryTest" time="2.471"/>
-  <system-out><![CDATA[]]></system-out>
-  <system-err><![CDATA[]]></system-err>
-</testsuite>

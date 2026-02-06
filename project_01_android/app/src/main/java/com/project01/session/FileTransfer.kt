@@ -1,5 +1,7 @@
 package com.project01.session
 
+import android.net.Uri
+import android.content.ContentResolver
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -70,6 +72,30 @@ class FileTransfer {
                             }
                             _events.emit(FileTransferEvent.Success(videoTitle))
                         }
+                    }
+                }
+            } catch (e: Exception) {
+                _events.emit(FileTransferEvent.Failure(videoTitle, e))
+            }
+        }
+    }
+
+    suspend fun sendFile(host: String, port: Int, uri: Uri, contentResolver: ContentResolver) {
+        withContext(Dispatchers.IO) {
+            val videoTitle = uri.lastPathSegment ?: "unknown_file" // Fallback for file name
+            try {
+                Socket(host, port).use { socket ->
+                    socket.getOutputStream().use { outputStream ->
+                        contentResolver.openInputStream(uri)?.use { inputStream ->
+                            val fileSize = inputStream.available().toLong() // This might not be accurate for all URIs, consider other methods for getting size
+                            outputStream.write(ByteBuffer.allocate(8).putLong(fileSize).array())
+                            val buffer = ByteArray(4096)
+                            var bytesRead: Int
+                            while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+                                outputStream.write(buffer, 0, bytesRead)
+                            }
+                            _events.emit(FileTransferEvent.Success(videoTitle))
+                        } ?: throw Exception("Could not open input stream for URI: $uri")
                     }
                 }
             } catch (e: Exception) {

@@ -52,7 +52,7 @@ class GameRepository(private val application: Application) {
         application.getSystemService(Context.WIFI_P2P_SERVICE) as WifiP2pManager
     }
     lateinit var channel: WifiP2pManager.Channel
-    private lateinit var broadcastReceiver: BroadcastReceiver
+    internal lateinit var broadcastReceiver: BroadcastReceiver
 
     val gameSync = GameSync(SocketNetworkManager())
     val fileTransfer = FileTransfer()

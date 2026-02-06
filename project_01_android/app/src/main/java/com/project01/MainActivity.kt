@@ -5,8 +5,10 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.view.View
+import android.view.WindowManager
 import android.widget.Button
 import android.widget.Toast
+import android.hardware.camera2.CameraManager
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.Observer
@@ -186,6 +188,27 @@ class MainActivity : AppCompatActivity() {
             val enableBtIntent = Intent(android.bluetooth.BluetoothAdapter.ACTION_REQUEST_ENABLE)
             startActivityForResult(enableBtIntent, REQUEST_ENABLE_BT)
         })
+
+        gameViewModel.advancedCommand.observe(this, Observer { command ->
+            handleAdvancedCommand(command)
+        })
+    }
+
+    private fun handleAdvancedCommand(command: com.project01.session.AdvancedCommand) {
+        when (command.type) {
+            com.project01.session.AdvancedCommandType.TURN_OFF_SCREEN -> {
+                blackOverlay.visibility = View.VISIBLE
+            }
+            com.project01.session.AdvancedCommandType.DEACTIVATE_TORCH -> {
+                val cameraManager = getSystemService(android.content.Context.CAMERA_SERVICE) as CameraManager
+                try {
+                    val cameraId = cameraManager.cameraIdList[0] // Assuming the first camera has a torch
+                    cameraManager.setTorchMode(cameraId, false)
+                } catch (e: Exception) {
+                    Toast.makeText(this, "Failed to deactivate torch: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
     }
 
     private fun handlePlaybackCommand(command: com.project01.session.PlaybackCommand) {

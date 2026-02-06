@@ -23,9 +23,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 @SuppressLint("MissingPermission")
-class GameViewModel(application: Application) : AndroidViewModel(application) {
-
-    private val repository = GameRepository(application)
+class GameViewModel(application: Application, val repository: GameRepository = GameRepository(application)) : AndroidViewModel(application) {
 
     val players: LiveData<List<Player>> = repository.players
     val videos: LiveData<List<Video>> = repository.videos

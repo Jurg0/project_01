@@ -63,19 +63,21 @@ class BluetoothRemoteControl(private val listener: (String) -> Unit) {
     }
 
     private fun manageMyConnectedSocket(socket: BluetoothSocket) {
-        // Start a thread to listen for incoming data
         val inputStream = socket.inputStream
         val buffer = ByteArray(1024)
         var numBytes: Int
 
-        while (true) {
-            try {
+        try {
+            while (true) {
                 numBytes = inputStream.read(buffer)
                 val readMessage = String(buffer, 0, numBytes)
                 listener(readMessage)
-            } catch (e: IOException) {
-                break
             }
+        } catch (_: IOException) {
+            // Connection lost or closed
+        } finally {
+            try { inputStream.close() } catch (_: IOException) {}
+            try { socket.close() } catch (_: IOException) {}
         }
     }
 }

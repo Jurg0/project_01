@@ -5,4 +5,8 @@ data class FileTransferRequest(
     val port: Int,
     val senderAddress: String,
     val targetAddress: String
-) : java.io.Serializable
+) : java.io.Serializable {
+    companion object {
+        private const val serialVersionUID = 1L
+    }
+}

@@ -4,11 +4,13 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
+import androidx.recyclerview.widget.DiffUtil
+import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.project01.session.Player
 
-class PlayerAdapter(var players: List<Player>, private val clickListener: (Player) -> Unit) :
-    RecyclerView.Adapter<PlayerAdapter.PlayerViewHolder>() {
+class PlayerAdapter(private val clickListener: (Player) -> Unit) :
+    ListAdapter<Player, PlayerAdapter.PlayerViewHolder>(PlayerDiffCallback()) {
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): PlayerViewHolder {
         val view = LayoutInflater.from(parent.context).inflate(R.layout.item_player, parent, false)
@@ -16,11 +18,7 @@ class PlayerAdapter(var players: List<Player>, private val clickListener: (Playe
     }
 
     override fun onBindViewHolder(holder: PlayerViewHolder, position: Int) {
-        holder.bind(players[position], clickListener)
-    }
-
-    override fun getItemCount(): Int {
-        return players.size
+        holder.bind(getItem(position), clickListener)
     }
 
     class PlayerViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
@@ -37,5 +35,14 @@ class PlayerAdapter(var players: List<Player>, private val clickListener: (Playe
             itemView.setOnClickListener { clickListener(player) }
         }
     }
-}
 
+    private class PlayerDiffCallback : DiffUtil.ItemCallback<Player>() {
+        override fun areItemsTheSame(oldItem: Player, newItem: Player): Boolean {
+            return oldItem.device.deviceAddress == newItem.device.deviceAddress
+        }
+
+        override fun areContentsTheSame(oldItem: Player, newItem: Player): Boolean {
+            return oldItem == newItem
+        }
+    }
+}

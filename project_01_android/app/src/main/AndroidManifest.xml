@@ -16,7 +16,7 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android.maxSdkVersion="32"
+        android:maxSdkVersion="32"
         tools:ignore="ScopedStorage" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.WRITE_SETTINGS"
@@ -44,7 +44,7 @@
             </intent-filter>
         </activity>
 
-        <service android:name=".p2p.ConnectionService" />
+        <service android:name=".p2p.ConnectionService" android:exported="false" />
     </application>
 
 </manifest>

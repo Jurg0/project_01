@@ -10,19 +10,16 @@ import android.content.IntentFilter
 import android.net.Uri
 import android.net.wifi.p2p.WifiP2pConfig
 import android.net.wifi.p2p.WifiP2pDevice
-import android.provider.OpenableColumns
 import android.net.wifi.p2p.WifiP2pManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
+import androidx.lifecycle.Observer
 import androidx.lifecycle.viewModelScope
 import com.project01.session.*
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.io.File
 
-@SuppressLint("MissingPermission")
 class GameViewModel(application: Application, val repository: GameRepository = GameRepository(application)) : AndroidViewModel(application) {
 
     val players: LiveData<List<Player>> = repository.players
@@ -50,6 +47,14 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     private var player: Player? = null
     private var bluetoothAdapter: BluetoothAdapter? = null
     private var bluetoothRemoteControl: BluetoothRemoteControl? = null
+    private var isBluetoothReceiverRegistered = false
+
+    private val connectionInfoObserver = Observer<android.net.wifi.p2p.WifiP2pInfo> { info ->
+        handleConnectionInfo(info)
+    }
+    private val gameSyncEventObserver = Observer<NetworkEvent> { event ->
+        handleGameSyncEvent(event)
+    }
 
     private val bluetoothReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: android.content.Context, intent: Intent) {
@@ -73,23 +78,21 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     val requestEnableBluetooth: LiveData<Boolean> = _requestEnableBluetooth
 
     init {
-        observeGameSyncEvents()
+        repository.gameSyncEvent.observeForever(gameSyncEventObserver)
+        repository.connectionInfo.observeForever(connectionInfoObserver)
         initializeBluetooth()
-        repository.connectionInfo.observeForever { info ->
-            handleConnectionInfo(info)
-        }
     }
 
     private fun handleConnectionInfo(info: android.net.wifi.p2p.WifiP2pInfo) {
         if (info.groupFormed) {
-            repository._isGameStarted.postValue(true)
+            repository.setGameStarted(true)
             if (info.isGroupOwner) {
                 player = thisDevice.value?.let { Player(it, it.deviceName, true) }
                 repository.gameSync.startServer()
                 _connectivityStatus.postValue("Host")
             } else {
                 player = thisDevice.value?.let { Player(it, it.deviceName, false) }
-                repository.gameSync.connectTo(info.groupOwnerAddress.hostAddress, 8888)
+                repository.gameSync.connectTo(info.groupOwnerAddress.hostAddress, repository.gameSync.port)
                 _connectivityStatus.postValue("Connected")
             }
         }
@@ -109,11 +112,13 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         }
     }
 
+    @SuppressLint("MissingPermission") // Permission checked in MainActivity before calling
     fun startBluetoothDiscovery() {
         getApplication<Application>().registerReceiver(
             bluetoothReceiver,
             IntentFilter(BluetoothDevice.ACTION_FOUND)
         )
+        isBluetoothReceiverRegistered = true
         bluetoothAdapter?.startDiscovery()
     }
 
@@ -121,16 +126,25 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         bluetoothRemoteControl?.connect(device)
     }
 
-    private fun observeGameSyncEvents() {
-        repository.gameSyncEvent.observeForever { (data, address) ->
-            when (data) {
-                is List<*> -> handleVideoList(data.filterIsInstance<Video>(), address)
-                is FileTransferRequest -> handleFileTransferRequest(data)
-                is PlaybackCommand -> _playbackCommand.postValue(data)
-                is PlaybackState -> applyPlaybackState(data)
-                is AdvancedCommand -> _advancedCommand.postValue(data)
-                is PasswordMessage -> handlePasswordMessage(data)
-                is PasswordResponseMessage -> handlePasswordResponseMessage(data)
+    private fun handleGameSyncEvent(event: NetworkEvent) {
+        when (event) {
+            is NetworkEvent.DataReceived -> {
+                val (data, address) = event.data to event.sender
+                when (data) {
+                    is List<*> -> handleVideoList(data.filterIsInstance<Video>(), address)
+                    is FileTransferRequest -> handleFileTransferRequest(data)
+                    is PlaybackCommand -> _playbackCommand.postValue(data)
+                    is PlaybackState -> applyPlaybackState(data)
+                    is AdvancedCommand -> _advancedCommand.postValue(data)
+                    is PasswordMessage -> handlePasswordMessage(data)
+                    is PasswordResponseMessage -> handlePasswordResponseMessage(data)
+                }
+            }
+            is NetworkEvent.Error -> {
+                repository.showToast(event.exception.message ?: "Unknown error")
+            }
+            is NetworkEvent.ClientDisconnected -> {
+                repository.showToast("Client disconnected: ${event.address}")
             }
         }
     }
@@ -183,6 +197,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     private val _passwordVerified = MutableLiveData<Boolean>()
     val passwordVerified: LiveData<Boolean> = _passwordVerified
 
+    @SuppressLint("MissingPermission") // Permission checked in MainActivity before calling
     fun createGame(password: String) {
         this.gamePassword = password
         repository.wifiP2pManager.createGroup(
@@ -193,21 +208,22 @@ class GameViewModel(application: Application, val repository: GameRepository = G
                 }
 
                 override fun onFailure(reason: Int) {
-                    repository._toastMessage.postValue("Group creation failed: $reason")
+                    repository.showToast("Group creation failed: $reason")
                 }
             })
     }
 
+    @SuppressLint("MissingPermission") // Permission checked in MainActivity before calling
     fun discoverPeers() {
         repository.wifiP2pManager.discoverPeers(
             repository.channel,
             object : WifiP2pManager.ActionListener {
                 override fun onSuccess() {
-                    repository._toastMessage.postValue("Discovery initiated")
+                    repository.showToast("Discovery initiated")
                 }
 
                 override fun onFailure(reason: Int) {
-                    repository._toastMessage.postValue("Discovery failed: $reason")
+                    repository.showToast("Discovery failed: $reason")
                 }
             })
     }
@@ -218,6 +234,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         }
     }
 
+    @SuppressLint("MissingPermission") // Permission checked in MainActivity before calling
     fun connectToPlayer(player: Player) {
         val config = WifiP2pConfig().apply {
             deviceAddress = player.device.deviceAddress
@@ -231,33 +248,19 @@ class GameViewModel(application: Application, val repository: GameRepository = G
                 }
 
                 override fun onFailure(reason: Int) {
-                    repository._toastMessage.postValue("Connection failed: $reason")
+                    repository.showToast("Connection failed: $reason")
                 }
             })
     }
 
     fun addVideo(uri: Uri) {
         viewModelScope.launch {
-            val fileName = getFileName(uri) ?: "Video ${videos.value?.size?.plus(1)}"
+            val fileName = repository.getFileName(uri) ?: "Video ${videos.value?.size?.plus(1)}"
             val video = Video(uri, fileName)
             val currentVideos = videos.value?.toMutableList() ?: mutableListOf()
             currentVideos.add(video)
             repository.gameSync.broadcast(currentVideos)
         }
-    }
-
-    private fun getFileName(uri: Uri): String? {
-        var name: String? = null
-        val cursor = getApplication<Application>().contentResolver.query(uri, null, null, null, null)
-        cursor?.use {
-            if (it.moveToFirst()) {
-                val displayNameIndex = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                if (displayNameIndex != -1) {
-                    name = it.getString(displayNameIndex)
-                }
-            }
-        }
-        return name
     }
 
     fun turnOffScreen() {
@@ -279,7 +282,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     fun moveVideoUp(position: Int) {
         viewModelScope.launch {
             val currentVideos = videos.value?.toMutableList() ?: return@launch
-            if (position > 0) {
+            if (position in 1..currentVideos.lastIndex) {
                 val video = currentVideos.removeAt(position)
                 currentVideos.add(position - 1, video)
                 repository.gameSync.broadcast(currentVideos)
@@ -290,7 +293,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     fun moveVideoDown(position: Int) {
         viewModelScope.launch {
             val currentVideos = videos.value?.toMutableList() ?: return@launch
-            if (position < currentVideos.size - 1) {
+            if (position in 0 until currentVideos.lastIndex) {
                 val video = currentVideos.removeAt(position)
                 currentVideos.add(position + 1, video)
                 repository.gameSync.broadcast(currentVideos)
@@ -301,8 +304,10 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     fun removeVideo(position: Int) {
         viewModelScope.launch {
             val currentVideos = videos.value?.toMutableList() ?: return@launch
-            currentVideos.removeAt(position)
-            repository.gameSync.broadcast(currentVideos)
+            if (position in currentVideos.indices) {
+                currentVideos.removeAt(position)
+                repository.gameSync.broadcast(currentVideos)
+            }
         }
     }
 
@@ -351,7 +356,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         senderAddress: String
     ) {
         viewModelScope.launch {
-            val port = findFreePort()
+            val port = repository.findFreePort()
             repository.gameSync.broadcast(
                 FileTransferRequest(
                     fileName,
@@ -363,31 +368,19 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         }
     }
 
-    private suspend fun findFreePort(): Int = withContext(Dispatchers.IO) {
-        var port = -1
-        try {
-            val socket = java.net.ServerSocket(0)
-            port = socket.localPort
-            socket.close()
-        } catch (e: java.io.IOException) {
-            e.printStackTrace()
-        }
-        port
-    }
-
 
 
     fun onPause() {
-        repository.onPause()
-        getApplication<Application>().unregisterReceiver(bluetoothReceiver)
-    }
-
-    fun onResume() {
-        repository.onResume()
+        if (isBluetoothReceiverRegistered) {
+            getApplication<Application>().unregisterReceiver(bluetoothReceiver)
+            isBluetoothReceiverRegistered = false
+        }
     }
 
     override fun onCleared() {
         super.onCleared()
+        repository.connectionInfo.removeObserver(connectionInfoObserver)
+        repository.gameSyncEvent.removeObserver(gameSyncEventObserver)
         repository.shutdown()
     }
 }

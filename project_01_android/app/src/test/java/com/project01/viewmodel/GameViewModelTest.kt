@@ -2,13 +2,14 @@ package com.project01.viewmodel
 
 import android.app.Application
 import android.content.Context
+import android.net.wifi.p2p.WifiP2pInfo
 import android.net.wifi.p2p.WifiP2pManager
 import android.os.Looper
 
-
+import androidx.lifecycle.MutableLiveData
 import com.project01.session.AdvancedCommand
 import com.project01.session.AdvancedCommandType
-import com.project01.viewmodel.GameRepository
+import com.project01.session.NetworkEvent
 import com.project01.session.GameSync
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -26,7 +27,6 @@ import org.mockito.Mockito.verify
 import org.mockito.MockitoAnnotations
 import org.mockito.kotlin.whenever
 import org.mockito.kotlin.any
-
 
 import kotlinx.coroutines.test.runTest
 
@@ -57,6 +57,8 @@ class GameViewModelTest {
         Dispatchers.setMain(testDispatcher)
         MockitoAnnotations.openMocks(this)
         `when`(mockGameRepository.gameSync).thenReturn(mockGameSync)
+        `when`(mockGameRepository.gameSyncEvent).thenReturn(MutableLiveData<NetworkEvent>())
+        `when`(mockGameRepository.connectionInfo).thenReturn(MutableLiveData<WifiP2pInfo>())
         whenever(mockApplication.getSystemService(Context.WIFI_P2P_SERVICE)).thenReturn(mockWifiP2pManager)
         whenever(mockWifiP2pManager.initialize(any(), any(), any())).thenReturn(mockWifiP2pChannel)
         whenever(mockApplication.mainLooper).thenReturn(mock(Looper::class.java))

@@ -7,4 +7,8 @@ enum class AdvancedCommandType {
 
 data class AdvancedCommand(
     val type: AdvancedCommandType
-) : java.io.Serializable
+) : java.io.Serializable {
+    companion object {
+        private const val serialVersionUID = 1L
+    }
+}

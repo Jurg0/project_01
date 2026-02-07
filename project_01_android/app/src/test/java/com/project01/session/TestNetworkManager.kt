@@ -6,8 +6,8 @@ import kotlinx.coroutines.flow.asSharedFlow
 
 class TestNetworkManager : NetworkManager {
 
-    private val _events = MutableSharedFlow<Pair<Any, String>>()
-    override val events: Flow<Pair<Any, String>> = _events.asSharedFlow()
+    private val _events = MutableSharedFlow<NetworkEvent>()
+    override val events: Flow<NetworkEvent> = _events.asSharedFlow()
 
     var onStartServer: (() -> Unit)? = null
     var onConnectTo: ((host: String, port: Int) -> Unit)? = null
@@ -30,7 +30,7 @@ class TestNetworkManager : NetworkManager {
         onShutdown?.invoke()
     }
 
-    suspend fun emitEvent(event: Pair<Any, String>) {
+    suspend fun emitEvent(event: NetworkEvent) {
         _events.emit(event)
     }
 }

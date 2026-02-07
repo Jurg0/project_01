@@ -11,4 +11,8 @@ data class PlaybackCommand(
     val videoIndex: Int = -1,
     val playbackPosition: Long = -1,
     val playWhenReady: Boolean = true
-) : java.io.Serializable
+) : java.io.Serializable {
+    companion object {
+        private const val serialVersionUID = 1L
+    }
+}

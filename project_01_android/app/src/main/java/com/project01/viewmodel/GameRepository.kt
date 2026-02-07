@@ -1,17 +1,16 @@
 package com.project01.viewmodel
 
-import android.annotation.SuppressLint
 import android.app.Application
 import android.content.BroadcastReceiver
 import android.content.Context
-import android.content.Intent
 import android.content.IntentFilter
+import android.net.Uri
 import android.net.wifi.p2p.WifiP2pDevice
 import android.net.wifi.p2p.WifiP2pInfo
 import android.net.wifi.p2p.WifiP2pManager
+import android.provider.OpenableColumns
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
-import com.project01.p2p.ConnectionService
 import com.project01.p2p.WifiDirectBroadcastReceiver
 import com.project01.session.*
 import kotlinx.coroutines.CoroutineScope
@@ -20,9 +19,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
-import java.net.InetAddress
+import kotlinx.coroutines.withContext
+import java.io.IOException
 
-@SuppressLint("MissingPermission")
 class GameRepository(private val application: Application) {
 
     private val _players = MutableLiveData<List<Player>>()
@@ -31,20 +30,20 @@ class GameRepository(private val application: Application) {
     private val _videos = MutableLiveData<List<Video>>()
     val videos: LiveData<List<Video>> = _videos
 
-    internal val _isGameStarted = MutableLiveData<Boolean>()
+    private val _isGameStarted = MutableLiveData<Boolean>()
     val isGameStarted: LiveData<Boolean> = _isGameStarted
 
     private val _thisDevice = MutableLiveData<WifiP2pDevice>()
     val thisDevice: LiveData<WifiP2pDevice> = _thisDevice
 
-    internal val _toastMessage = MutableLiveData<String>()
+    private val _toastMessage = MutableLiveData<String>()
     val toastMessage: LiveData<String> = _toastMessage
 
     private val _fileTransferEvent = MutableLiveData<FileTransferEvent>()
     val fileTransferEvent: LiveData<FileTransferEvent> = _fileTransferEvent
 
-    private val _gameSyncEvent = MutableLiveData<Pair<Any, String>>()
-    val gameSyncEvent: LiveData<Pair<Any, String>> = _gameSyncEvent
+    private val _gameSyncEvent = MutableLiveData<NetworkEvent>()
+    val gameSyncEvent: LiveData<NetworkEvent> = _gameSyncEvent
 
     var isWifiP2pEnabled = false
 
@@ -58,7 +57,7 @@ class GameRepository(private val application: Application) {
     val fileTransfer = FileTransfer()
     private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
-    private val intentFilter = IntentFilter().apply {
+    val intentFilter = IntentFilter().apply {
         addAction(WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION)
         addAction(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION)
         addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION)
@@ -83,14 +82,13 @@ class GameRepository(private val application: Application) {
     init {
         channel = wifiP2pManager.initialize(application, application.mainLooper, null)
         broadcastReceiver = WifiDirectBroadcastReceiver(wifiP2pManager, channel, this)
-        application.registerReceiver(broadcastReceiver, intentFilter)
         observeGameSyncEvents()
         observeFileTransferEvents()
     }
 
     private fun observeGameSyncEvents() {
-        gameSync.events.onEach {
-            _gameSyncEvent.postValue(it)
+        gameSync.events.onEach { event ->
+            _gameSyncEvent.postValue(event)
         }.launchIn(coroutineScope)
     }
 
@@ -104,13 +102,37 @@ class GameRepository(private val application: Application) {
         _thisDevice.postValue(device)
     }
 
-    fun onPause() {
-        application.unregisterReceiver(broadcastReceiver)
-        application.stopService(Intent(application, ConnectionService::class.java))
+    fun setGameStarted(started: Boolean) {
+        _isGameStarted.postValue(started)
     }
 
-    fun onResume() {
-        application.registerReceiver(broadcastReceiver, intentFilter)
+    fun showToast(message: String) {
+        _toastMessage.postValue(message)
+    }
+
+    fun getFileName(uri: Uri): String? {
+        var name: String? = null
+        application.contentResolver.query(uri, null, null, null, null)?.use {
+            if (it.moveToFirst()) {
+                val displayNameIndex = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (displayNameIndex != -1) {
+                    name = it.getString(displayNameIndex)
+                }
+            }
+        }
+        return name
+    }
+
+    suspend fun findFreePort(): Int = withContext(Dispatchers.IO) {
+        try {
+            val socket = java.net.ServerSocket(0)
+            val port = socket.localPort
+            socket.close()
+            port
+        } catch (e: IOException) {
+            android.util.Log.e("GameRepository", "Failed to find free port", e)
+            -1
+        }
     }
 
     fun shutdown() {
@@ -119,7 +141,6 @@ class GameRepository(private val application: Application) {
         fileTransfer.shutdown()
         wifiP2pManager.removeGroup(channel, null)
         channel.close()
-        application.stopService(Intent(application, ConnectionService::class.java))
     }
 }
 

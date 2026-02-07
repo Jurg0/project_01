@@ -2,6 +2,7 @@ package com.project01
 
 import app.cash.turbine.test
 import com.project01.session.GameSync
+import com.project01.session.NetworkEvent
 import com.project01.session.TestNetworkManager
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.launch
@@ -30,7 +31,7 @@ class GameSyncTest {
     fun `events from network manager are exposed`() = runTest {
         val testNetworkManager = TestNetworkManager()
         val gameSync = GameSync(testNetworkManager)
-        val event = "test_event" to "test_address"
+        val event = NetworkEvent.DataReceived("test_event", "test_address")
 
         gameSync.events.test {
             launch {

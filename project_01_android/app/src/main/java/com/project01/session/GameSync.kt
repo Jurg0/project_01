@@ -11,6 +11,9 @@ import java.net.Socket
 
 class GameSync(private val networkManager: NetworkManager) {
 
+    val port: Int
+        get() = (networkManager as? SocketNetworkManager)?.port ?: 8888
+
     val events = networkManager.events
 
     fun startServer() {

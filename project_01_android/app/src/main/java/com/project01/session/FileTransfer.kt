@@ -2,6 +2,7 @@ package com.project01.session
 
 import android.net.Uri
 import android.content.ContentResolver
+import android.provider.OpenableColumns
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -80,14 +81,28 @@ class FileTransfer {
         }
     }
 
+    private fun queryFileSize(contentResolver: ContentResolver, uri: Uri): Long {
+        contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (sizeIndex != -1 && !cursor.isNull(sizeIndex)) {
+                    return cursor.getLong(sizeIndex)
+                }
+            }
+        }
+        return -1L
+    }
+
     suspend fun sendFile(host: String, port: Int, uri: Uri, contentResolver: ContentResolver) {
         withContext(Dispatchers.IO) {
-            val videoTitle = uri.lastPathSegment ?: "unknown_file" // Fallback for file name
+            val videoTitle = uri.lastPathSegment ?: "unknown_file"
             try {
                 Socket(host, port).use { socket ->
                     socket.getOutputStream().use { outputStream ->
                         contentResolver.openInputStream(uri)?.use { inputStream ->
-                            val fileSize = inputStream.available().toLong() // This might not be accurate for all URIs, consider other methods for getting size
+                            val fileSize = queryFileSize(contentResolver, uri).let {
+                                if (it > 0) it else inputStream.available().toLong()
+                            }
                             outputStream.write(ByteBuffer.allocate(8).putLong(fileSize).array())
                             val buffer = ByteArray(4096)
                             var bytesRead: Int

@@ -11,7 +11,7 @@ class TestNetworkManager : NetworkManager {
 
     var onStartServer: (() -> Unit)? = null
     var onConnectTo: ((host: String, port: Int) -> Unit)? = null
-    var onBroadcast: (suspend (data: Any) -> Unit)? = null
+    var onBroadcast: (suspend (data: GameMessage) -> Unit)? = null
     var onShutdown: (() -> Unit)? = null
 
     override fun startServer() {
@@ -22,7 +22,7 @@ class TestNetworkManager : NetworkManager {
         onConnectTo?.invoke(host, port)
     }
 
-    override suspend fun broadcast(data: Any) {
+    override suspend fun broadcast(data: GameMessage) {
         onBroadcast?.invoke(data)
     }
 

@@ -6,6 +6,6 @@ interface NetworkManager {
     val events: Flow<NetworkEvent>
     fun startServer()
     fun connectTo(host: String, port: Int)
-    suspend fun broadcast(data: Any)
+    suspend fun broadcast(data: GameMessage)
     fun shutdown()
 }

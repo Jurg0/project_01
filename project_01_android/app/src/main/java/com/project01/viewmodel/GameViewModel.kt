@@ -131,13 +131,14 @@ class GameViewModel(application: Application, val repository: GameRepository = G
             is NetworkEvent.DataReceived -> {
                 val (data, address) = event.data to event.sender
                 when (data) {
-                    is List<*> -> handleVideoList(data.filterIsInstance<Video>(), address)
+                    is VideoListMessage -> handleVideoList(data.videos.map { it.toVideo() }, address)
                     is FileTransferRequest -> handleFileTransferRequest(data)
                     is PlaybackCommand -> _playbackCommand.postValue(data)
                     is PlaybackState -> applyPlaybackState(data)
                     is AdvancedCommand -> _advancedCommand.postValue(data)
                     is PasswordMessage -> handlePasswordMessage(data)
                     is PasswordResponseMessage -> handlePasswordResponseMessage(data)
+                    is HeartbeatMsg -> { /* filtered by SocketNetworkManager */ }
                 }
             }
             is NetworkEvent.Error -> {
@@ -259,7 +260,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
             val video = Video(uri, fileName)
             val currentVideos = videos.value?.toMutableList() ?: mutableListOf()
             currentVideos.add(video)
-            repository.gameSync.broadcast(currentVideos)
+            repository.gameSync.broadcast(VideoListMessage(currentVideos.map { it.toDto() }))
         }
     }
 
@@ -285,7 +286,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
             if (position in 1..currentVideos.lastIndex) {
                 val video = currentVideos.removeAt(position)
                 currentVideos.add(position - 1, video)
-                repository.gameSync.broadcast(currentVideos)
+                repository.gameSync.broadcast(VideoListMessage(currentVideos.map { it.toDto() }))
             }
         }
     }
@@ -296,7 +297,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
             if (position in 0 until currentVideos.lastIndex) {
                 val video = currentVideos.removeAt(position)
                 currentVideos.add(position + 1, video)
-                repository.gameSync.broadcast(currentVideos)
+                repository.gameSync.broadcast(VideoListMessage(currentVideos.map { it.toDto() }))
             }
         }
     }
@@ -306,7 +307,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
             val currentVideos = videos.value?.toMutableList() ?: return@launch
             if (position in currentVideos.indices) {
                 currentVideos.removeAt(position)
-                repository.gameSync.broadcast(currentVideos)
+                repository.gameSync.broadcast(VideoListMessage(currentVideos.map { it.toDto() }))
             }
         }
     }

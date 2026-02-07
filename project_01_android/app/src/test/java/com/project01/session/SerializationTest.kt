@@ -2,20 +2,13 @@ package com.project01.session
 
 import org.junit.Test
 import org.junit.Assert.*
-import java.io.ByteArrayInputStream
-import java.io.ByteArrayOutputStream
-import java.io.ObjectInputStream
-import java.io.ObjectOutputStream
+import java.nio.ByteBuffer
 
 class SerializationTest {
 
-    private fun <T> serializeAndDeserialize(obj: T): T {
-        val byteArrayOutputStream = ByteArrayOutputStream()
-        ObjectOutputStream(byteArrayOutputStream).use { it.writeObject(obj) }
-        val bytes = byteArrayOutputStream.toByteArray()
-        val byteArrayInputStream = ByteArrayInputStream(bytes)
-        @Suppress("UNCHECKED_CAST")
-        return ObjectInputStream(byteArrayInputStream).use { it.readObject() } as T
+    private fun roundTrip(message: GameMessage): GameMessage {
+        val encoded = MessageEnvelope.encode(message)
+        return MessageEnvelope.decode(encoded)
     }
 
     @Test
@@ -26,14 +19,14 @@ class SerializationTest {
             playbackPosition = 12345L,
             playWhenReady = false
         )
-        val deserialized = serializeAndDeserialize(original)
+        val deserialized = roundTrip(original)
         assertEquals(original, deserialized)
     }
 
     @Test
     fun `PlaybackCommand serialization round-trip with NEXT and defaults`() {
         val original = PlaybackCommand(type = PlaybackCommandType.NEXT)
-        val deserialized = serializeAndDeserialize(original)
+        val deserialized = roundTrip(original) as PlaybackCommand
         assertEquals(original, deserialized)
         assertEquals(PlaybackCommandType.NEXT, deserialized.type)
         assertEquals(-1, deserialized.videoIndex)
@@ -49,7 +42,7 @@ class SerializationTest {
             playbackPosition = 99999L,
             playWhenReady = true
         )
-        val deserialized = serializeAndDeserialize(original)
+        val deserialized = roundTrip(original)
         assertEquals(original, deserialized)
     }
 
@@ -60,7 +53,7 @@ class SerializationTest {
             playbackPosition = 67890L,
             playWhenReady = true
         )
-        val deserialized = serializeAndDeserialize(original)
+        val deserialized = roundTrip(original)
         assertEquals(original, deserialized)
     }
 
@@ -71,14 +64,14 @@ class SerializationTest {
             playbackPosition = 0L,
             playWhenReady = false
         )
-        val deserialized = serializeAndDeserialize(original)
+        val deserialized = roundTrip(original)
         assertEquals(original, deserialized)
     }
 
     @Test
     fun `AdvancedCommand serialization round-trip with TURN_OFF_SCREEN`() {
         val original = AdvancedCommand(type = AdvancedCommandType.TURN_OFF_SCREEN)
-        val deserialized = serializeAndDeserialize(original)
+        val deserialized = roundTrip(original) as AdvancedCommand
         assertEquals(original, deserialized)
         assertEquals(AdvancedCommandType.TURN_OFF_SCREEN, deserialized.type)
     }
@@ -86,7 +79,7 @@ class SerializationTest {
     @Test
     fun `AdvancedCommand serialization round-trip with DEACTIVATE_TORCH`() {
         val original = AdvancedCommand(type = AdvancedCommandType.DEACTIVATE_TORCH)
-        val deserialized = serializeAndDeserialize(original)
+        val deserialized = roundTrip(original) as AdvancedCommand
         assertEquals(original, deserialized)
         assertEquals(AdvancedCommandType.DEACTIVATE_TORCH, deserialized.type)
     }
@@ -94,7 +87,7 @@ class SerializationTest {
     @Test
     fun `PasswordMessage serialization round-trip`() {
         val original = PasswordMessage(password = "s3cretP@ss!")
-        val deserialized = serializeAndDeserialize(original)
+        val deserialized = roundTrip(original) as PasswordMessage
         assertEquals(original, deserialized)
         assertEquals("s3cretP@ss!", deserialized.password)
     }
@@ -102,14 +95,14 @@ class SerializationTest {
     @Test
     fun `PasswordMessage serialization round-trip with empty password`() {
         val original = PasswordMessage(password = "")
-        val deserialized = serializeAndDeserialize(original)
+        val deserialized = roundTrip(original)
         assertEquals(original, deserialized)
     }
 
     @Test
     fun `PasswordResponseMessage serialization round-trip with success`() {
         val original = PasswordResponseMessage(success = true)
-        val deserialized = serializeAndDeserialize(original)
+        val deserialized = roundTrip(original) as PasswordResponseMessage
         assertEquals(original, deserialized)
         assertEquals(true, deserialized.success)
     }
@@ -117,7 +110,7 @@ class SerializationTest {
     @Test
     fun `PasswordResponseMessage serialization round-trip with failure`() {
         val original = PasswordResponseMessage(success = false)
-        val deserialized = serializeAndDeserialize(original)
+        val deserialized = roundTrip(original) as PasswordResponseMessage
         assertEquals(original, deserialized)
         assertEquals(false, deserialized.success)
     }
@@ -130,7 +123,7 @@ class SerializationTest {
             senderAddress = "192.168.1.10",
             targetAddress = "192.168.1.20"
         )
-        val deserialized = serializeAndDeserialize(original)
+        val deserialized = roundTrip(original) as FileTransferRequest
         assertEquals(original, deserialized)
         assertEquals("video_clip.mp4", deserialized.fileName)
         assertEquals(9090, deserialized.port)
@@ -139,18 +132,56 @@ class SerializationTest {
     }
 
     @Test
-    fun `Heartbeat serialization round-trip`() {
-        val original = Heartbeat(timestamp = 1700000000000L)
-        val deserialized = serializeAndDeserialize(original)
+    fun `HeartbeatMsg serialization round-trip`() {
+        val original = HeartbeatMsg(timestamp = 1700000000000L)
+        val deserialized = roundTrip(original) as HeartbeatMsg
         assertEquals(original, deserialized)
         assertEquals(1700000000000L, deserialized.timestamp)
     }
 
     @Test
-    fun `Heartbeat serialization round-trip with default timestamp`() {
-        val original = Heartbeat()
-        val deserialized = serializeAndDeserialize(original)
-        assertEquals(original, deserialized)
+    fun `HeartbeatMsg serialization round-trip with default timestamp`() {
+        val original = HeartbeatMsg()
+        val deserialized = roundTrip(original) as HeartbeatMsg
         assertEquals(original.timestamp, deserialized.timestamp)
+    }
+
+    @Test
+    fun `VideoListMessage serialization round-trip`() {
+        val original = VideoListMessage(
+            videos = listOf(
+                VideoDto("content://video1", "Video 1"),
+                VideoDto("content://video2", "Video 2")
+            )
+        )
+        val deserialized = roundTrip(original) as VideoListMessage
+        assertEquals(original, deserialized)
+        assertEquals(2, deserialized.videos.size)
+        assertEquals("content://video1", deserialized.videos[0].uriString)
+        assertEquals("Video 1", deserialized.videos[0].title)
+    }
+
+    @Test
+    fun `VideoListMessage serialization round-trip with empty list`() {
+        val original = VideoListMessage(videos = emptyList())
+        val deserialized = roundTrip(original) as VideoListMessage
+        assertEquals(original, deserialized)
+        assertTrue(deserialized.videos.isEmpty())
+    }
+
+    @Test
+    fun `encode includes correct length prefix`() {
+        val message = PlaybackCommand(PlaybackCommandType.NEXT)
+        val bytes = MessageEnvelope.encode(message)
+        val length = ByteBuffer.wrap(bytes, 0, 4).int
+        assertEquals(bytes.size - 4, length)
+    }
+
+    @Test
+    fun `JSON contains type discriminator`() {
+        val message = PlaybackCommand(PlaybackCommandType.NEXT)
+        val bytes = MessageEnvelope.encode(message)
+        val jsonString = bytes.drop(4).toByteArray().decodeToString()
+        assertTrue("JSON should contain type discriminator", jsonString.contains("\"msg_type\":\"playback_command\""))
     }
 }

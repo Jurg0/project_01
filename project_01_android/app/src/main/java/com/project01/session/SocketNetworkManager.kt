@@ -5,18 +5,13 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
-import java.io.ObjectInputStream
-import java.io.ObjectOutputStream
+import java.io.DataInputStream
+import java.io.DataOutputStream
+import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.ConcurrentHashMap
-
-internal data class Heartbeat(val timestamp: Long = System.currentTimeMillis()) : java.io.Serializable {
-    companion object {
-        private const val serialVersionUID = 1L
-    }
-}
 
 class SocketNetworkManager(val port: Int = 8888) : NetworkManager {
 
@@ -28,7 +23,7 @@ class SocketNetworkManager(val port: Int = 8888) : NetworkManager {
 
     private val serverSocket = ServerSocket(port)
     private val clients = ConcurrentHashMap<String, Socket>()
-    private val clientOutputStreams = ConcurrentHashMap<String, ObjectOutputStream>()
+    private val clientOutputStreams = ConcurrentHashMap<String, OutputStream>()
     private val lastHeartbeat = ConcurrentHashMap<String, Long>()
     private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _events = MutableSharedFlow<NetworkEvent>()
@@ -61,17 +56,16 @@ class SocketNetworkManager(val port: Int = 8888) : NetworkManager {
         coroutineScope.launch {
             while (isActive) {
                 delay(HEARTBEAT_INTERVAL_MS)
-                // Send heartbeat to all clients
+                val heartbeatBytes = MessageEnvelope.encode(HeartbeatMsg())
                 val snapshot = clientOutputStreams.entries.toList()
                 snapshot.forEach { (address, stream) ->
                     try {
-                        stream.writeObject(Heartbeat())
+                        stream.write(heartbeatBytes)
                         stream.flush()
                     } catch (e: Exception) {
                         Log.w(TAG, "Heartbeat failed for $address", e)
                     }
                 }
-                // Check for timed-out clients
                 val now = System.currentTimeMillis()
                 lastHeartbeat.entries.toList().forEach { (address, lastSeen) ->
                     if (now - lastSeen > HEARTBEAT_TIMEOUT_MS) {
@@ -110,22 +104,22 @@ class SocketNetworkManager(val port: Int = 8888) : NetworkManager {
 
     private suspend fun handleClient(client: Socket) {
         withContext(Dispatchers.IO) {
-            var outputStream: ObjectOutputStream? = null
-            var inputStream: ObjectInputStream? = null
+            var outputStream: OutputStream? = null
+            var inputStream: DataInputStream? = null
             try {
-                outputStream = ObjectOutputStream(client.getOutputStream())
+                outputStream = client.getOutputStream()
                 client.inetAddress.hostAddress?.let { address ->
                     clientOutputStreams[address] = outputStream
                 }
-                inputStream = ObjectInputStream(client.getInputStream())
+                inputStream = DataInputStream(client.getInputStream())
                 while (isActive) {
-                    val data = inputStream.readObject()
+                    val message = MessageEnvelope.readFrom(inputStream)
                     client.inetAddress.hostAddress?.let { address ->
-                        if (data is Heartbeat) {
+                        if (message is HeartbeatMsg) {
                             lastHeartbeat[address] = System.currentTimeMillis()
                         } else {
                             lastHeartbeat[address] = System.currentTimeMillis()
-                            _events.emit(NetworkEvent.DataReceived(data, address))
+                            _events.emit(NetworkEvent.DataReceived(message, address))
                         }
                     }
                 }
@@ -141,12 +135,13 @@ class SocketNetworkManager(val port: Int = 8888) : NetworkManager {
         }
     }
 
-    override suspend fun broadcast(data: Any) {
+    override suspend fun broadcast(data: GameMessage) {
         withContext(Dispatchers.IO) {
+            val bytes = MessageEnvelope.encode(data)
             val snapshot = clientOutputStreams.entries.toList()
             snapshot.forEach { (address, stream) ->
                 try {
-                    stream.writeObject(data)
+                    stream.write(bytes)
                     stream.flush()
                 } catch (e: Exception) {
                     Log.e(TAG, "Error broadcasting to $address", e)

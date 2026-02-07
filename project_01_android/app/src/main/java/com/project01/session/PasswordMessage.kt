@@ -1,9 +1,8 @@
 package com.project01.session
 
-import java.io.Serializable
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 
-data class PasswordMessage(val password: String) : Serializable {
-    companion object {
-        private const val serialVersionUID = 1L
-    }
-}
+@Serializable
+@SerialName("password")
+data class PasswordMessage(val password: String) : GameMessage

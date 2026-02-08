@@ -3,7 +3,6 @@ plugins {
     id 'org.jetbrains.kotlin.android'
     id 'kotlin-parcelize'
     id 'org.jetbrains.kotlin.plugin.serialization'
-    id 'org.jacoco.android' // Apply JaCoCo plugin
 }
 
 def gitVersionName = {
@@ -29,10 +28,6 @@ def gitVersionCode = {
     return 1
 }()
 
-jacoco {
-    toolVersion = "0.8.11" // Use a recent JaCoCo version
-}
-
 android {
     namespace 'com.project01'
     compileSdk 34
@@ -51,9 +46,6 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-        }
-        debug {
-            testCoverageEnabled true // Enable test coverage for debug builds
         }
     }
     compileOptions {
@@ -95,29 +87,4 @@ dependencies {
     testImplementation 'androidx.test:core-ktx:1.5.0'
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
-}
-
-tasks.withType(Test) {
-    jacoco.includeNoLocationClasses = true
-    jacoco.excludes = ['jdk.internal.*']
-}
-
-task jacocoTestReport(type: JacocoReport, dependsOn: ['testDebugUnitTest']) {
-    reports {
-        xml.required = true
-        html.required = true
-    }
-
-    def fileFilter = ['**/R.class', '**/R$*.class', '**/BuildConfig.*', '**/Manifest*.*', '**/*_Provide*.*',
-                      '**/*_Factory*.*', '**/*_MembersInjector*.*', '**/*_Tool*.*', '**/*_Impl*.*',
-                      '**/*Analytics*.*', '**/*Activity*.*', '**/*Fragment*.*', '**/*View.class',
-                      '**/*Adapter.class', '**/*ViewHolder.class', '**/*App.class']
-    def debugTree = fileTree(dir: "${buildDir}/intermediates/javac/debug", excludes: fileFilter)
-    def mainSrc = "${project.projectDir}/src/main/java"
-
-    sourceDirectories.setFrom(files([mainSrc]))
-    classDirectories.setFrom(files([debugTree]))
-    executionData.setFrom(fileTree(dir: "$buildDir", includes: [
-            "jacoco/testDebugUnitTest.exec"
-    ]))
 }

@@ -7,7 +7,7 @@ on:
     branches: [ main ]
 
 jobs:
-  build:
+  build-and-test:
     runs-on: ubuntu-latest
 
     steps:
@@ -19,20 +19,14 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      - name: Remove local Java home override
+        run: sed -i '/org.gradle.java.home/d' project_01_android/gradle.properties
+
       - name: Make gradlew executable
         run: chmod +x project_01_android/gradlew
 
-      - name: Run JaCoCo Test Report
-        run: ./project_01_android/gradlew -p ./project_01_android jacocoTestReport
+      - name: Build debug APK
+        run: ./project_01_android/gradlew -p ./project_01_android assembleDebug
 
-      - name: Upload JaCoCo HTML Report
-        uses: actions/upload-artifact@v4
-        with:
-          name: jacoco-html-report
-          path: project_01_android/app/build/reports/jacoco/jacocoTestReport/html
-
-      - name: Upload JaCoCo XML Report
-        uses: actions/upload-artifact@v4
-        with:
-          name: jacoco-xml-report
-          path: project_01_android/app/build/reports/jacoco/jacocoTestReport/jacocoTestReport.xml
+      - name: Run unit tests
+        run: ./project_01_android/gradlew -p ./project_01_android test

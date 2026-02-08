@@ -416,29 +416,24 @@ Tests: New `PasswordHasherTest.kt` (8 tests), updated `SerializationTest.kt` (+1
 
 ## Priority 12 — Battery and Doze Mode
 
-### 12.1 Convert ConnectionService to foreground service and handle power management
+### 12.1 ~~Convert ConnectionService to foreground service and handle power management~~ DONE
 
-`ConnectionService` is a background service with `PARTIAL_WAKE_LOCK` and `WIFI_MODE_FULL_HIGH_PERF`. On Android 8+ (API 26+), background services are killed after approximately one minute. Since `minSdk` is 24, there's a brief API 24-25 window where background services survive, but on all modern devices the service will be killed. Additionally, `WIFI_MODE_FULL_HIGH_PERF` is deprecated in API 34.
+~~`ConnectionService` is a background service with `PARTIAL_WAKE_LOCK` and `WIFI_MODE_FULL_HIGH_PERF`. On Android 8+ (API 26+), background services are killed after approximately one minute. Since `minSdk` is 24, there's a brief API 24-25 window where background services survive, but on all modern devices the service will be killed. Additionally, `WIFI_MODE_FULL_HIGH_PERF` is deprecated in API 34.~~
 
 **Changes:**
-- Add permissions to `AndroidManifest.xml`:
-  - `android.permission.FOREGROUND_SERVICE`
-  - `android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE` (API 34+)
-  - `android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`
-- Update service declaration: add `android:foregroundServiceType="connectedDevice"`
-- Rewrite `ConnectionService`:
-  - Create notification channel in `onCreate()` (required for API 26+)
-  - Call `startForeground(NOTIFICATION_ID, notification)` in `onStartCommand()` with a low-priority persistent notification ("Game session active")
-  - Replace `WIFI_MODE_FULL_HIGH_PERF` with version check: `WIFI_MODE_FULL_LOW_LATENCY` on API 29+, `WIFI_MODE_FULL_HIGH_PERF` on older
-  - Add 4-hour timeout to wake lock: `wakeLock?.acquire(4 * 60 * 60 * 1000L)` — prevents indefinite lock on OEMs with strict battery policies
-  - Call `stopForeground(STOP_FOREGROUND_REMOVE)` in `onDestroy()`
-- `MainActivity`: replace `startService()` with `ContextCompat.startForegroundService()` when game starts; check `powerManager.isIgnoringBatteryOptimizations(packageName)` and prompt with `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` if not exempted
-- `GameViewModel`: expose `requestBatteryOptimization` LiveData event for the Activity to observe
+- ~~Added `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_CONNECTED_DEVICE`, and `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` permissions to `AndroidManifest.xml`~~
+- ~~Updated service declaration with `android:foregroundServiceType="connectedDevice"`~~
+- ~~Rewrote `ConnectionService` as foreground service:~~
+  - ~~Creates notification channel (`game_connection`, low importance) on API 26+~~
+  - ~~Calls `startForeground()` with persistent "Game session active" notification~~
+  - ~~Uses `WIFI_MODE_FULL_LOW_LATENCY` on API 29+, `WIFI_MODE_FULL_HIGH_PERF` on older~~
+  - ~~Wake lock has 4-hour timeout~~
+  - ~~`onDestroy()` releases locks and calls `stopForeground(true)`~~
+- ~~`MainActivity`: starts service via `ContextCompat.startForegroundService()` when `isGameStarted` becomes true, stops when false; removed `stopService` from `onPause()` so the service persists across activity pauses~~
 
-**Files modified:** `ConnectionService.kt`, `AndroidManifest.xml`, `MainActivity.kt`, `GameViewModel.kt`
+**Files modified:** `ConnectionService.kt`, `AndroidManifest.xml`, `MainActivity.kt`
 
-**Tests:**
-- New `ConnectionServiceTest.kt` with Robolectric — verify `startForeground()` is called, notification channel created on API 26+, wake lock has timeout, wifi lock uses correct mode per API level
+**Tests:** New `ConnectionServiceTest.kt` (5 tests): startForeground called, notification channel created, START_STICKY return, constants validation, onDestroy cleanup. Total tests: 77 (up from 72).
 
 ---
 

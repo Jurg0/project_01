@@ -175,6 +175,11 @@ class MainActivity : AppCompatActivity() {
 
         gameViewModel.isGameStarted.observe(this, Observer { isStarted ->
             updateUi(isStarted)
+            if (isStarted) {
+                ContextCompat.startForegroundService(this, Intent(this, ConnectionService::class.java))
+            } else {
+                stopService(Intent(this, ConnectionService::class.java))
+            }
         })
 
         gameViewModel.toastMessage.observe(this, Observer { message ->
@@ -328,7 +333,6 @@ class MainActivity : AppCompatActivity() {
         releasePlayer()
         gameViewModel.onPause()
         unregisterReceiver(gameViewModel.repository.broadcastReceiver)
-        stopService(Intent(this, ConnectionService::class.java))
     }
 
     private fun initializePlayer() {

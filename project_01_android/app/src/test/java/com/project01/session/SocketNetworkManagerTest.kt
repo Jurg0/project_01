@@ -1,6 +1,9 @@
 package com.project01.session
 
 import app.cash.turbine.test
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
@@ -48,6 +51,19 @@ class SocketNetworkManagerTest {
         client.close()
     }
 
+    private suspend fun awaitClientConnected() {
+        val ready = CompletableDeferred<Unit>()
+        val job = CoroutineScope(Dispatchers.Default).launch {
+            manager.events.collect { event ->
+                if (event is NetworkEvent.ClientConnected) {
+                    ready.complete(Unit)
+                }
+            }
+        }
+        ready.await()
+        job.cancel()
+    }
+
     @Test
     fun `broadcast delivers message to connected client`() = runTest {
         manager.startServer()
@@ -57,7 +73,7 @@ class SocketNetworkManagerTest {
         client.soTimeout = 5000
         val clientInput = DataInputStream(client.getInputStream())
 
-        delay(500)
+        awaitClientConnected()
 
         val testMessage = PlaybackCommand(PlaybackCommandType.NEXT)
         manager.broadcast(testMessage)
@@ -169,7 +185,7 @@ class SocketNetworkManagerTest {
         client.soTimeout = 5000
         val clientInput = DataInputStream(client.getInputStream())
 
-        delay(500)
+        awaitClientConnected()
 
         val msg1 = PlaybackCommand(PlaybackCommandType.NEXT)
         val msg2 = PlaybackCommand(PlaybackCommandType.PREVIOUS)

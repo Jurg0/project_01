@@ -63,7 +63,7 @@ class SocketNetworkManagerTest {
         var received: GameMessage? = null
         for (attempt in 1..10) {
             val msg = MessageEnvelope.readFrom(clientInput)
-            if (msg !is HeartbeatMsg) {
+            if (msg !is HeartbeatMsg && msg !is PasswordChallenge) {
                 received = msg
                 break
             }
@@ -95,6 +95,51 @@ class SocketNetworkManagerTest {
     }
 
     @Test
+    fun `server sends PasswordChallenge to new client`() = runTest {
+        manager.startServer()
+        delay(200)
+
+        val client = Socket("127.0.0.1", manager.port)
+        client.soTimeout = 5000
+        val clientInput = DataInputStream(client.getInputStream())
+
+        // First message from server should be a PasswordChallenge
+        val message = MessageEnvelope.readFrom(clientInput)
+        assertTrue("Expected PasswordChallenge, got ${message::class.simpleName}", message is PasswordChallenge)
+        val challenge = message as PasswordChallenge
+        assertEquals(64, challenge.nonce.length)
+
+        client.close()
+    }
+
+    @Test
+    fun `consumeNonce returns and removes stored nonce`() = runTest {
+        manager.startServer()
+        delay(200)
+
+        val client = Socket("127.0.0.1", manager.port)
+        client.soTimeout = 5000
+        val clientInput = DataInputStream(client.getInputStream())
+
+        // Read the challenge to get the nonce
+        val challenge = MessageEnvelope.readFrom(clientInput) as PasswordChallenge
+        delay(200)
+
+        // consumeNonce should return the nonce for the client address
+        val clientAddress = client.inetAddress.hostAddress!!
+        // Server stores nonce by the client's remote address as seen from the server
+        // We need to find the address the server assigned
+        val nonce = manager.consumeNonce("127.0.0.1")
+        assertNotNull("Nonce should be present", nonce)
+        assertEquals(challenge.nonce, nonce)
+
+        // Second call should return null (consumed)
+        assertNull(manager.consumeNonce("127.0.0.1"))
+
+        client.close()
+    }
+
+    @Test
     fun `broadcast delivers different messages in order`() = runTest {
         manager.startServer()
         delay(200)
@@ -113,7 +158,7 @@ class SocketNetworkManagerTest {
         fun readSkippingHeartbeats(input: DataInputStream): GameMessage? {
             for (i in 1..10) {
                 val msg = MessageEnvelope.readFrom(input)
-                if (msg !is HeartbeatMsg) return msg
+                if (msg !is HeartbeatMsg && msg !is PasswordChallenge) return msg
             }
             return null
         }

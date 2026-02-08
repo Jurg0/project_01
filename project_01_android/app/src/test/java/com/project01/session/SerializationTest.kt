@@ -86,17 +86,27 @@ class SerializationTest {
 
     @Test
     fun `PasswordMessage serialization round-trip`() {
-        val original = PasswordMessage(password = "s3cretP@ss!")
+        val hash = PasswordHasher.hash("s3cretP@ss!", "testnonce")
+        val original = PasswordMessage(passwordHash = hash)
         val deserialized = roundTrip(original) as PasswordMessage
         assertEquals(original, deserialized)
-        assertEquals("s3cretP@ss!", deserialized.password)
+        assertEquals(hash, deserialized.passwordHash)
     }
 
     @Test
-    fun `PasswordMessage serialization round-trip with empty password`() {
-        val original = PasswordMessage(password = "")
+    fun `PasswordMessage serialization round-trip with empty hash`() {
+        val original = PasswordMessage(passwordHash = "")
         val deserialized = roundTrip(original)
         assertEquals(original, deserialized)
+    }
+
+    @Test
+    fun `PasswordChallenge serialization round-trip`() {
+        val nonce = PasswordHasher.generateNonce()
+        val original = PasswordChallenge(nonce = nonce)
+        val deserialized = roundTrip(original) as PasswordChallenge
+        assertEquals(original, deserialized)
+        assertEquals(nonce, deserialized.nonce)
     }
 
     @Test

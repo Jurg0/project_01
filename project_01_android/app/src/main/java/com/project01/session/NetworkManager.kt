@@ -8,4 +8,5 @@ interface NetworkManager {
     fun connectTo(host: String, port: Int)
     suspend fun broadcast(data: GameMessage)
     fun shutdown()
+    fun consumeNonce(address: String): String? = null
 }

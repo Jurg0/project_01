@@ -14,6 +14,11 @@ import com.project01.session.AdvancedCommand
 import com.project01.session.AdvancedCommandType
 import com.project01.session.NetworkEvent
 import com.project01.session.GameSync
+import com.project01.session.PasswordChallenge
+import com.project01.session.PasswordHasher
+import com.project01.session.PasswordMessage
+import com.project01.session.PasswordResponseMessage
+import com.project01.session.Player
 import com.project01.session.PlaybackCommand
 import com.project01.session.PlaybackCommandType
 import com.project01.session.PlaybackState
@@ -282,5 +287,108 @@ class GameViewModelTest {
         method.invoke(gameViewModel)
 
         verify(mockGameRepository).shutdown()
+    }
+
+    // --- Password challenge-response tests ---
+
+    @Test
+    fun `joinGame after receiving challenge sends hashed password`() = runTest {
+        val nonce = "abc123"
+
+        // Receive challenge first
+        gameSyncEventLiveData.value = NetworkEvent.DataReceived(
+            PasswordChallenge(nonce), "192.168.1.1"
+        )
+
+        // Then join with password
+        gameViewModel.joinGame("mypassword")
+
+        val expectedHash = PasswordHasher.hash("mypassword", nonce)
+        verify(mockGameSync).broadcast(PasswordMessage(passwordHash = expectedHash))
+    }
+
+    @Test
+    fun `joinGame before receiving challenge sends hash when challenge arrives`() = runTest {
+        val nonce = "def456"
+
+        // Enter password first
+        gameViewModel.joinGame("mypassword")
+
+        // Verify nothing sent yet (no challenge received)
+        verify(mockGameSync, never()).broadcast(any())
+
+        // Then receive challenge
+        gameSyncEventLiveData.value = NetworkEvent.DataReceived(
+            PasswordChallenge(nonce), "192.168.1.1"
+        )
+
+        val expectedHash = PasswordHasher.hash("mypassword", nonce)
+        verify(mockGameSync).broadcast(PasswordMessage(passwordHash = expectedHash))
+    }
+
+    private fun makeGameMaster(password: String) {
+        val playerField = gameViewModel.javaClass.getDeclaredField("player")
+        playerField.isAccessible = true
+        playerField.set(gameViewModel, Player(WifiP2pDevice(), "TestDevice", true))
+
+        val passwordField = gameViewModel.javaClass.getDeclaredField("gamePassword")
+        passwordField.isAccessible = true
+        passwordField.set(gameViewModel, password)
+    }
+
+    @Test
+    fun `server verifies correct password hash`() = runTest {
+        val nonce = "servernonce"
+        val password = "correctpassword"
+        makeGameMaster(password)
+
+        `when`(mockGameSync.consumeNonce("192.168.1.5")).thenReturn(nonce)
+
+        val correctHash = PasswordHasher.hash(password, nonce)
+        gameSyncEventLiveData.value = NetworkEvent.DataReceived(
+            PasswordMessage(passwordHash = correctHash), "192.168.1.5"
+        )
+
+        verify(mockGameSync).broadcast(PasswordResponseMessage(success = true))
+    }
+
+    @Test
+    fun `server rejects incorrect password hash`() = runTest {
+        val nonce = "servernonce"
+        makeGameMaster("correctpassword")
+
+        `when`(mockGameSync.consumeNonce("192.168.1.5")).thenReturn(nonce)
+
+        val wrongHash = PasswordHasher.hash("wrongpassword", nonce)
+        gameSyncEventLiveData.value = NetworkEvent.DataReceived(
+            PasswordMessage(passwordHash = wrongHash), "192.168.1.5"
+        )
+
+        verify(mockGameSync).broadcast(PasswordResponseMessage(success = false))
+    }
+
+    @Test
+    fun `server rejects password when nonce is missing`() = runTest {
+        makeGameMaster("password")
+
+        `when`(mockGameSync.consumeNonce("192.168.1.5")).thenReturn(null)
+
+        gameSyncEventLiveData.value = NetworkEvent.DataReceived(
+            PasswordMessage(passwordHash = "somehash"), "192.168.1.5"
+        )
+
+        verify(mockGameSync).broadcast(PasswordResponseMessage(success = false))
+    }
+
+    @Test
+    fun `PasswordResponseMessage updates passwordVerified LiveData`() {
+        var verified: Boolean? = null
+        gameViewModel.passwordVerified.observeForever { verified = it }
+
+        gameSyncEventLiveData.value = NetworkEvent.DataReceived(
+            PasswordResponseMessage(success = true), "192.168.1.1"
+        )
+
+        assertEquals(true, verified)
     }
 }

@@ -136,7 +136,8 @@ class GameViewModel(application: Application, val repository: GameRepository = G
                     is PlaybackCommand -> _playbackCommand.postValue(data)
                     is PlaybackState -> applyPlaybackState(data)
                     is AdvancedCommand -> _advancedCommand.postValue(data)
-                    is PasswordMessage -> handlePasswordMessage(data)
+                    is PasswordChallenge -> handlePasswordChallenge(data)
+                    is PasswordMessage -> handlePasswordMessage(data, address)
                     is PasswordResponseMessage -> handlePasswordResponseMessage(data)
                     is HeartbeatMsg -> { /* filtered by SocketNetworkManager */ }
                 }
@@ -150,14 +151,28 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         }
     }
 
-    private fun handlePasswordMessage(message: PasswordMessage) {
+    private fun handlePasswordChallenge(challenge: PasswordChallenge) {
+        pendingNonce = challenge.nonce
+        pendingPassword?.let { password ->
+            val hash = PasswordHasher.hash(password, challenge.nonce)
+            viewModelScope.launch {
+                repository.gameSync.broadcast(PasswordMessage(passwordHash = hash))
+            }
+            pendingNonce = null
+        }
+    }
+
+    private fun handlePasswordMessage(message: PasswordMessage, senderAddress: String) {
         if (isGameMaster()) {
-            val success = message.password == gamePassword
+            val nonce = repository.gameSync.consumeNonce(senderAddress)
+            val success = if (nonce != null) {
+                val expectedHash = PasswordHasher.hash(gamePassword ?: "", nonce)
+                message.passwordHash == expectedHash
+            } else {
+                false
+            }
             viewModelScope.launch {
                 repository.gameSync.broadcast(PasswordResponseMessage(success))
-            }
-            if (!success) {
-                // TODO: Disconnect the player
             }
         }
     }
@@ -195,6 +210,8 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     }
 
     private var gamePassword: String? = null
+    private var pendingPassword: String? = null
+    private var pendingNonce: String? = null
     private val _passwordVerified = MutableLiveData<Boolean>()
     val passwordVerified: LiveData<Boolean> = _passwordVerified
 
@@ -230,8 +247,13 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     }
 
     fun joinGame(password: String) {
-        viewModelScope.launch {
-            repository.gameSync.broadcast(PasswordMessage(password))
+        pendingPassword = password
+        pendingNonce?.let { nonce ->
+            val hash = PasswordHasher.hash(password, nonce)
+            viewModelScope.launch {
+                repository.gameSync.broadcast(PasswordMessage(passwordHash = hash))
+            }
+            pendingNonce = null
         }
     }
 

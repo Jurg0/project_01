@@ -384,9 +384,9 @@ Currently, when a TCP connection drops, `NetworkEvent.ClientDisconnected` is emi
 
 ## Priority 11 — Password Security
 
-### 11.1 Replace plaintext password with challenge-response hashing
+### 11.1 ~~Replace plaintext password with challenge-response hashing~~ DONE
 
-`PasswordMessage` currently sends the password as a plaintext string over TCP. While Wi-Fi Direct is a local network, any device in the P2P group can observe traffic. A challenge-response scheme prevents replay attacks and password exposure.
+~~`PasswordMessage` currently sends the password as a plaintext string over TCP. While Wi-Fi Direct is a local network, any device in the P2P group can observe traffic. A challenge-response scheme prevents replay attacks and password exposure.~~
 
 **Protocol flow:**
 1. Client connects via TCP
@@ -396,25 +396,24 @@ Currently, when a TCP connection drops, `NetworkEvent.ClientDisconnected` is emi
 5. Nonce is discarded (single-use, prevents replay)
 
 **Changes:**
-- Create `PasswordChallenge` message type with `nonce: String` field
-- Change `PasswordMessage.password: String` → `passwordHash: String`
-- Create `PasswordHasher` utility object:
-  - `generateNonce(): String` — 32-byte `SecureRandom`, hex-encoded
-  - `hash(password: String, nonce: String): String` — `SHA-256(password + nonce)`, hex-encoded
-- `SocketNetworkManager`: after accepting a client and creating the output stream, immediately send `PasswordChallenge(nonce)` to the new client; store nonce per client in `clientNonces: ConcurrentHashMap<String, String>`
-- `GameViewModel` client side: add `PasswordChallenge` handler in `handleGameSyncEvent` — compute hash and send `PasswordMessage`; `joinGame()` stores password locally but does NOT send immediately, waits for challenge
-- `GameViewModel` server side: in `handlePasswordMessage`, retrieve nonce for sender address, compute expected hash, compare, remove nonce after use
+- ~~Create `PasswordChallenge` message type with `nonce: String` field~~
+- ~~Change `PasswordMessage.password: String` → `passwordHash: String`~~
+- ~~Create `PasswordHasher` utility object:~~
+  - ~~`generateNonce(): String` — 32-byte `SecureRandom`, hex-encoded~~
+  - ~~`hash(password: String, nonce: String): String` — `SHA-256(password + nonce)`, hex-encoded~~
+- ~~`SocketNetworkManager`: after accepting a client and creating the output stream, immediately send `PasswordChallenge(nonce)` to the new client; store nonce per client in `clientNonces: ConcurrentHashMap<String, String>`~~
+- ~~`GameViewModel` client side: add `PasswordChallenge` handler in `handleGameSyncEvent` — compute hash and send `PasswordMessage`; `joinGame()` stores password locally but does NOT send immediately, waits for challenge~~
+- ~~`GameViewModel` server side: in `handlePasswordMessage`, retrieve nonce for sender address, compute expected hash, compare, remove nonce after use~~
+- ~~Added `consumeNonce(address)` method to `NetworkManager` interface (with default null implementation) and `GameSync` facade for nonce retrieval from ViewModel~~
+- ~~Client-side handles both orderings: password entered before challenge arrives, and challenge received before password entered~~
 
-**New files:** `PasswordChallenge.kt`, `PasswordHasher.kt`
+New files: `PasswordChallenge.kt`, `PasswordHasher.kt`
 
-**Files modified:** `PasswordMessage.kt`, `GameViewModel.kt`, `SocketNetworkManager.kt`
+Files modified: `PasswordMessage.kt`, `GameViewModel.kt`, `SocketNetworkManager.kt`, `NetworkManager.kt`, `GameSync.kt`
 
-**No new dependencies** — uses `java.security.MessageDigest` and `java.security.SecureRandom`.
+No new dependencies — uses `java.security.MessageDigest` and `java.security.SecureRandom`.
 
-**Tests:**
-- New `PasswordHasherTest.kt` — `generateNonce()` uniqueness and length, `hash()` consistency for same input, different results for different nonces/passwords
-- Update `SerializationTest.kt` — add round-trip test for `PasswordChallenge`, update `PasswordMessage` test for `passwordHash` field
-- Update `GameViewModelTest.kt` — full challenge-response flow: emit `PasswordChallenge`, verify `PasswordMessage` with correct hash is broadcast; server-side hash verification
+Tests: New `PasswordHasherTest.kt` (8 tests), updated `SerializationTest.kt` (+1 `PasswordChallenge` round-trip, updated `PasswordMessage` tests for `passwordHash` field), updated `GameViewModelTest.kt` (+6 challenge-response flow tests), updated `SocketNetworkManagerTest.kt` (+2 challenge/nonce tests). Total tests: 61 (up from 44).
 
 ---
 

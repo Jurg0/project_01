@@ -25,11 +25,14 @@ class SocketNetworkManager(val port: Int = 8888) : NetworkManager {
     private val clients = ConcurrentHashMap<String, Socket>()
     private val clientOutputStreams = ConcurrentHashMap<String, OutputStream>()
     private val lastHeartbeat = ConcurrentHashMap<String, Long>()
+    private val clientNonces = ConcurrentHashMap<String, String>()
+    private var isServer = false
     private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _events = MutableSharedFlow<NetworkEvent>()
     override val events: Flow<NetworkEvent> = _events.asSharedFlow()
 
     override fun startServer() {
+        isServer = true
         coroutineScope.launch {
             while (isActive) {
                 try {
@@ -110,6 +113,13 @@ class SocketNetworkManager(val port: Int = 8888) : NetworkManager {
                 outputStream = client.getOutputStream()
                 client.inetAddress.hostAddress?.let { address ->
                     clientOutputStreams[address] = outputStream
+                    if (isServer) {
+                        val nonce = PasswordHasher.generateNonce()
+                        clientNonces[address] = nonce
+                        val challengeBytes = MessageEnvelope.encode(PasswordChallenge(nonce))
+                        outputStream.write(challengeBytes)
+                        outputStream.flush()
+                    }
                 }
                 inputStream = DataInputStream(client.getInputStream())
                 while (isActive) {
@@ -158,8 +168,13 @@ class SocketNetworkManager(val port: Int = 8888) : NetworkManager {
             clients.remove(address)
             clientOutputStreams.remove(address)
             lastHeartbeat.remove(address)
+            clientNonces.remove(address)
             _events.emit(NetworkEvent.ClientDisconnected(address))
         }
+    }
+
+    override fun consumeNonce(address: String): String? {
+        return clientNonces.remove(address)
     }
 
     override fun shutdown() {
@@ -168,6 +183,7 @@ class SocketNetworkManager(val port: Int = 8888) : NetworkManager {
         clientOutputStreams.values.forEach { try { it.close() } catch (_: Exception) {} }
         clients.clear()
         clientOutputStreams.clear()
+        clientNonces.clear()
         coroutineScope.cancel()
     }
 }

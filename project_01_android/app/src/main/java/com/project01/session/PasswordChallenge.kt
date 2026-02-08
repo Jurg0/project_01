@@ -4,5 +4,5 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 @Serializable
-@SerialName("password")
-data class PasswordMessage(val passwordHash: String) : GameMessage
+@SerialName("password_challenge")
+data class PasswordChallenge(val nonce: String) : GameMessage

@@ -39,6 +39,13 @@ class SocketNetworkManager(val port: Int = 8888) : NetworkManager {
                     val client = serverSocket.accept()
                     val address = client.inetAddress.hostAddress
                     if (address != null) {
+                        // Clean up old dead connection from same address (client reconnecting)
+                        clients.remove(address)?.let { oldSocket ->
+                            clientOutputStreams.remove(address)
+                            lastHeartbeat.remove(address)
+                            clientNonces.remove(address)
+                            try { oldSocket.close() } catch (_: Exception) {}
+                        }
                         clients[address] = client
                         lastHeartbeat[address] = System.currentTimeMillis()
                         launch { handleClient(client) }
@@ -120,6 +127,7 @@ class SocketNetworkManager(val port: Int = 8888) : NetworkManager {
                         outputStream.write(challengeBytes)
                         outputStream.flush()
                     }
+                    _events.emit(NetworkEvent.ClientConnected(address))
                 }
                 inputStream = DataInputStream(client.getInputStream())
                 while (isActive) {

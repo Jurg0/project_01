@@ -22,6 +22,7 @@ import com.project01.session.Player
 import com.project01.session.PlaybackCommand
 import com.project01.session.PlaybackCommandType
 import com.project01.session.PlaybackState
+import com.project01.session.ReconnectionManager
 import com.project01.session.Video
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -40,6 +41,7 @@ import org.mockito.Mockito.verify
 import org.mockito.MockitoAnnotations
 import org.mockito.kotlin.whenever
 import org.mockito.kotlin.any
+import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.never
 
 import kotlinx.coroutines.test.runTest
@@ -60,6 +62,8 @@ class GameViewModelTest {
     private lateinit var mockGameRepository: GameRepository
     @Mock
     private lateinit var mockGameSync: GameSync
+    @Mock
+    private lateinit var mockReconnectionManager: ReconnectionManager
     @Mock
     private lateinit var mockWifiP2pManager: WifiP2pManager
     @Mock
@@ -83,6 +87,10 @@ class GameViewModelTest {
         videosLiveData = MutableLiveData<List<Video>>()
 
         `when`(mockGameRepository.gameSync).thenReturn(mockGameSync)
+        `when`(mockGameSync.reconnectionManager).thenReturn(mockReconnectionManager)
+        `when`(mockReconnectionManager.state).thenReturn(
+            kotlinx.coroutines.flow.MutableStateFlow(ReconnectionManager.ReconnectionState.Idle)
+        )
         `when`(mockGameRepository.gameSyncEvent).thenReturn(gameSyncEventLiveData)
         `when`(mockGameRepository.connectionInfo).thenReturn(connectionInfoLiveData)
         `when`(mockGameRepository.videos).thenReturn(videosLiveData)
@@ -213,10 +221,47 @@ class GameViewModelTest {
     }
 
     @Test
-    fun `handleGameSyncEvent ClientDisconnected shows toast`() {
+    fun `handleGameSyncEvent ClientDisconnected shows toast for game master`() {
+        makeGameMaster("password")
         gameSyncEventLiveData.value = NetworkEvent.ClientDisconnected("192.168.1.5")
 
         verify(mockGameRepository).showToast("Client disconnected: 192.168.1.5")
+    }
+
+    @Test
+    fun `handleGameSyncEvent ClientDisconnected triggers reconnect for non-game-master`() {
+        // Set lastHost/lastPort via reflection
+        gameViewModel.javaClass.getDeclaredField("lastHost").apply {
+            isAccessible = true
+            set(gameViewModel, "192.168.1.1")
+        }
+        gameViewModel.javaClass.getDeclaredField("lastPort").apply {
+            isAccessible = true
+            set(gameViewModel, 8888)
+        }
+
+        gameSyncEventLiveData.value = NetworkEvent.ClientDisconnected("192.168.1.1")
+
+        verify(mockReconnectionManager).startReconnecting("192.168.1.1", 8888)
+    }
+
+    @Test
+    fun `handleGameSyncEvent ClientDisconnected does not trigger reconnect for game master`() {
+        makeGameMaster("password")
+        gameSyncEventLiveData.value = NetworkEvent.ClientDisconnected("192.168.1.5")
+
+        verify(mockReconnectionManager, never()).startReconnecting(any(), any())
+    }
+
+    @Test
+    fun `handleGameSyncEvent ClientConnected updates connectivity status and stops reconnection`() {
+        var status: String? = null
+        gameViewModel.connectivityStatus.observeForever { status = it }
+
+        gameSyncEventLiveData.value = NetworkEvent.ClientConnected("192.168.1.1")
+
+        verify(mockReconnectionManager).stopReconnecting()
+        assertEquals("Connected", status)
     }
 
     @Test

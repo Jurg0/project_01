@@ -1,6 +1,14 @@
 package com.project01.session
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+
 class GameSync(private val networkManager: NetworkManager) {
+
+    private val reconnectionScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    val reconnectionManager = ReconnectionManager(networkManager, reconnectionScope)
 
     val port: Int
         get() = (networkManager as? SocketNetworkManager)?.port ?: 8888
@@ -24,6 +32,8 @@ class GameSync(private val networkManager: NetworkManager) {
     }
 
     fun shutdown() {
+        reconnectionManager.shutdown()
+        reconnectionScope.cancel()
         networkManager.shutdown()
     }
 }

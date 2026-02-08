@@ -17,6 +17,7 @@ import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.Observer
 import androidx.lifecycle.viewModelScope
 import com.project01.session.*
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -45,6 +46,8 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     val bluetoothDevices: LiveData<List<BluetoothDevice>> = _bluetoothDevices
 
     private var player: Player? = null
+    private var lastHost: String? = null
+    private var lastPort: Int? = null
     private var bluetoothAdapter: BluetoothAdapter? = null
     private var bluetoothRemoteControl: BluetoothRemoteControl? = null
     private var isBluetoothReceiverRegistered = false
@@ -81,6 +84,21 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         repository.gameSyncEvent.observeForever(gameSyncEventObserver)
         repository.connectionInfo.observeForever(connectionInfoObserver)
         initializeBluetooth()
+        observeReconnectionState()
+    }
+
+    private fun observeReconnectionState() {
+        viewModelScope.launch {
+            repository.gameSync.reconnectionManager.state.collectLatest { state ->
+                when (state) {
+                    is ReconnectionManager.ReconnectionState.Reconnecting ->
+                        _connectivityStatus.postValue("Reconnecting (attempt ${state.attempt})...")
+                    is ReconnectionManager.ReconnectionState.Failed ->
+                        _connectivityStatus.postValue("Disconnected")
+                    else -> {}
+                }
+            }
+        }
     }
 
     private fun handleConnectionInfo(info: android.net.wifi.p2p.WifiP2pInfo) {
@@ -92,7 +110,9 @@ class GameViewModel(application: Application, val repository: GameRepository = G
                 _connectivityStatus.postValue("Host")
             } else {
                 player = thisDevice.value?.let { Player(it, it.deviceName, false) }
-                repository.gameSync.connectTo(info.groupOwnerAddress.hostAddress, repository.gameSync.port)
+                lastHost = info.groupOwnerAddress.hostAddress
+                lastPort = repository.gameSync.port
+                repository.gameSync.connectTo(lastHost!!, lastPort!!)
                 _connectivityStatus.postValue("Connected")
             }
         }
@@ -145,8 +165,24 @@ class GameViewModel(application: Application, val repository: GameRepository = G
             is NetworkEvent.Error -> {
                 repository.showToast(event.exception.message ?: "Unknown error")
             }
+            is NetworkEvent.ClientConnected -> {
+                if (!isGameMaster()) {
+                    repository.gameSync.reconnectionManager.stopReconnecting()
+                    _connectivityStatus.postValue("Connected")
+                }
+            }
             is NetworkEvent.ClientDisconnected -> {
-                repository.showToast("Client disconnected: ${event.address}")
+                if (!isGameMaster()) {
+                    val host = lastHost
+                    val port = lastPort
+                    if (host != null && port != null) {
+                        repository.gameSync.reconnectionManager.startReconnecting(host, port)
+                    } else {
+                        _connectivityStatus.postValue("Disconnected")
+                    }
+                } else {
+                    repository.showToast("Client disconnected: ${event.address}")
+                }
             }
         }
     }

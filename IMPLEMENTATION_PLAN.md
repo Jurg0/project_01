@@ -350,35 +350,32 @@ SerializationTest expanded from 14 to 18 tests (added `VideoListMessage` round-t
 
 ## Priority 10 — Reconnection Logic
 
-### 10.1 Add automatic client reconnection with exponential backoff
+### 10.1 ~~Add automatic client reconnection with exponential backoff~~ DONE
 
-Currently, when a TCP connection drops, `NetworkEvent.ClientDisconnected` is emitted and displayed as a toast, but nothing attempts to reconnect. The Wi-Fi Direct P2P group typically survives a TCP disconnect, so the TCP layer should attempt automatic reconnection.
+~~Currently, when a TCP connection drops, `NetworkEvent.ClientDisconnected` is emitted and displayed as a toast, but nothing attempts to reconnect. The Wi-Fi Direct P2P group typically survives a TCP disconnect, so the TCP layer should attempt automatic reconnection.~~
 
 **Changes:**
-- Create `ReconnectionManager` class encapsulating the reconnection state machine:
-  - Constructor parameters: `networkManager: NetworkManager`, `maxRetries: Int = 10`, `baseDelayMs: Long = 1000`, `maxDelayMs: Long = 30000`
-  - States (sealed class `ReconnectionState`): `Idle`, `Connecting`, `Connected`, `Reconnecting(attempt: Int)`, `Failed`
-  - Exposes `StateFlow<ReconnectionState>` for UI observation
-  - `startReconnecting(host, port)` — launches coroutine loop with exponential backoff (`min(baseDelayMs * 2^attempt, maxDelayMs) + random(0..500)` jitter), calls `networkManager.connectTo()`, listens for `ClientConnected` event to confirm success
-  - `stopReconnecting()` — cancels reconnection coroutine, transitions to `Idle`
-- Add `NetworkEvent.ClientConnected(val address: String)` — emitted in `SocketNetworkManager.handleClient()` after successful output stream creation
-- Server-side in `SocketNetworkManager.startServer()`: when a reconnecting client connects from a known address, close the old dead socket before storing the new one
-- `GameViewModel`:
-  - Store connection parameters: `lastHost: String?`, `lastPort: Int?` — saved in `handleConnectionInfo()`
-  - On `ClientDisconnected` event (client-side only, not game master): trigger `reconnectionManager.startReconnecting(lastHost, lastPort)`
-  - After successful reconnect: re-send `PasswordMessage` to re-authenticate
-  - Update `_connectivityStatus` to reflect states: `"Disconnected"`, `"Reconnecting (attempt N)..."`, `"Connected"`
-  - Stop reconnection in `onPause()`, check connection state in `onResume()`
-- Expose `ReconnectionManager` through `GameSync`
+- ~~Create `ReconnectionManager` class encapsulating the reconnection state machine:~~
+  - ~~Constructor parameters: `networkManager: NetworkManager`, `scope: CoroutineScope`, `maxRetries: Int = 10`, `baseDelayMs: Long = 1000`, `maxDelayMs: Long = 30000`, `connectionTimeoutMs: Long = 10_000`~~
+  - ~~States (sealed class `ReconnectionState`): `Idle`, `Reconnecting(attempt: Int)`, `Connected`, `Failed`~~
+  - ~~Exposes `StateFlow<ReconnectionState>` for UI observation~~
+  - ~~`startReconnecting(host, port)` — launches coroutine loop with exponential backoff (`min(baseDelayMs * 2^attempt, maxDelayMs) + random(0..500)` jitter), calls `networkManager.connectTo()`, uses `CompletableDeferred` with `UNDISPATCHED` collect to listen for `ClientConnected`/`Error` events per attempt~~
+  - ~~`stopReconnecting()` — cancels reconnection coroutine, transitions to `Idle`~~
+- ~~Add `NetworkEvent.ClientConnected(val address: String)` — emitted in `SocketNetworkManager.handleClient()` after successful output stream creation~~
+- ~~Server-side in `SocketNetworkManager.startServer()`: when a reconnecting client connects from a known address, close the old dead socket before storing the new one~~
+- ~~`GameViewModel`:~~
+  - ~~Store connection parameters: `lastHost: String?`, `lastPort: Int?` — saved in `handleConnectionInfo()`~~
+  - ~~On `ClientDisconnected` event (client-side only, not game master): trigger `reconnectionManager.startReconnecting(lastHost, lastPort)`~~
+  - ~~Re-authentication happens automatically: server sends new `PasswordChallenge` on reconnect, client's stored `pendingPassword` triggers the hash response~~
+  - ~~Update `_connectivityStatus` to reflect states: `"Disconnected"`, `"Reconnecting (attempt N)..."`, `"Connected"`~~
+  - ~~Observe `ReconnectionManager.state` via `collectLatest` for status updates~~
+- ~~Expose `ReconnectionManager` through `GameSync` (with dedicated `CoroutineScope` for reconnection, cancelled in `shutdown()`)~~
 
-**New files:** `ReconnectionManager.kt`
+New files: `ReconnectionManager.kt`
 
-**Files modified:** `GameViewModel.kt`, `SocketNetworkManager.kt`, `NetworkEvent.kt`, `GameSync.kt`
+Files modified: `GameViewModel.kt`, `SocketNetworkManager.kt`, `NetworkEvent.kt`, `GameSync.kt`
 
-**Tests:**
-- New `ReconnectionManagerTest.kt` — exponential backoff timing (via `TestCoroutineScheduler`), state transitions (`Idle` → `Reconnecting(1)` → `Connected`), max retry limit → `Failed`, `stopReconnecting()` cancellation
-- Update `GameViewModelTest.kt` — `ClientDisconnected` triggers reconnect for non-game-master, does NOT trigger for game master, successful reconnect re-sends `PasswordMessage`, connectivity status updates through lifecycle
-- Update `SocketNetworkManagerTest.kt` — second connection from same address replaces first, `ClientConnected` event emitted
+Tests: New `ReconnectionManagerTest.kt` (7 tests: initial state, success on first attempt, retry on error + success on second, max retries → Failed, stopReconnecting, exponential backoff computation, duplicate startReconnecting ignored). Updated `GameViewModelTest.kt` (+3 reconnection trigger tests, updated ClientDisconnected test). Updated `SocketNetworkManagerTest.kt` (+1 ClientConnected event test). Total tests: 72 (up from 61).
 
 ---
 

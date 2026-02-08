@@ -1,6 +1,8 @@
 package com.project01.session
 
+import app.cash.turbine.test
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.*
@@ -135,6 +137,26 @@ class SocketNetworkManagerTest {
 
         // Second call should return null (consumed)
         assertNull(manager.consumeNonce("127.0.0.1"))
+
+        client.close()
+    }
+
+    @Test
+    fun `ClientConnected event emitted when client connects`() = runTest {
+        manager.startServer()
+        delay(200)
+
+        launch {
+            manager.events.test {
+                val event = awaitItem()
+                assertTrue("Expected ClientConnected, got $event", event is NetworkEvent.ClientConnected)
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+
+        delay(100)
+        val client = Socket("127.0.0.1", manager.port)
+        delay(500)
 
         client.close()
     }

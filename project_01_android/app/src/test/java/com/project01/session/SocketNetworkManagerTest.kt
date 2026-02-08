@@ -128,7 +128,6 @@ class SocketNetworkManagerTest {
         delay(200)
 
         // consumeNonce should return the nonce for the client address
-        val clientAddress = client.inetAddress.hostAddress!!
         // Server stores nonce by the client's remote address as seen from the server
         // We need to find the address the server assigned
         val nonce = manager.consumeNonce("127.0.0.1")

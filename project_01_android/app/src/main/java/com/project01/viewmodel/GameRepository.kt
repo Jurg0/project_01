@@ -50,9 +50,6 @@ class GameRepository(private val application: Application) {
     val wifiP2pManager: WifiP2pManager by lazy {
         application.getSystemService(Context.WIFI_P2P_SERVICE) as WifiP2pManager
     }
-    lateinit var channel: WifiP2pManager.Channel
-    internal lateinit var broadcastReceiver: BroadcastReceiver
-
     val gameSync = GameSync(SocketNetworkManager())
     val fileTransfer = FileTransfer()
     private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -79,9 +76,10 @@ class GameRepository(private val application: Application) {
         _connectionInfo.postValue(info)
     }
 
+    val channel: WifiP2pManager.Channel = wifiP2pManager.initialize(application, application.mainLooper, null)
+    internal val broadcastReceiver: BroadcastReceiver = WifiDirectBroadcastReceiver(wifiP2pManager, channel, this)
+
     init {
-        channel = wifiP2pManager.initialize(application, application.mainLooper, null)
-        broadcastReceiver = WifiDirectBroadcastReceiver(wifiP2pManager, channel, this)
         observeGameSyncEvents()
         observeFileTransferEvents()
     }

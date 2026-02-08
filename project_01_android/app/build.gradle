@@ -5,6 +5,29 @@ plugins {
     id 'org.jetbrains.kotlin.plugin.serialization'
 }
 
+def gitVersionName = {
+    try {
+        def describe = 'git describe --tags --abbrev=0 --match v*'.execute([], rootDir)
+        describe.waitFor()
+        if (describe.exitValue() == 0) {
+            return describe.text.trim().replaceFirst(/^v/, '')
+        }
+    } catch (ignored) {}
+    return '0.0.0-dev'
+}()
+
+def gitVersionCode = {
+    try {
+        def count = 'git tag --list v*'.execute([], rootDir)
+        count.waitFor()
+        if (count.exitValue() == 0) {
+            def tags = count.text.trim()
+            return tags.isEmpty() ? 1 : tags.split('\n').length
+        }
+    } catch (ignored) {}
+    return 1
+}()
+
 android {
     namespace 'com.project01'
     compileSdk 34
@@ -13,8 +36,8 @@ android {
         applicationId "com.project01"
         minSdk 24
         targetSdk 34
-        versionCode 1
-        versionName "1.0"
+        versionCode gitVersionCode
+        versionName gitVersionName
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }

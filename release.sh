@@ -3,14 +3,20 @@ set -euo pipefail
 
 # Usage: ./release.sh v1.0.0 "Optional release message"
 
+# Show current version from latest git tag
+CURRENT_TAG=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || echo "none")
+CURRENT_VERSION=${CURRENT_TAG#v}
+echo "Current version: $CURRENT_VERSION (tag: $CURRENT_TAG)"
+
 if [ $# -lt 1 ]; then
+    echo ""
     echo "Usage: $0 <version-tag> [message]"
     echo "Example: $0 v1.0.0 \"Initial release\""
     exit 1
 fi
 
 VERSION="$1"
-MESSAGE="${2:-Release $VERSION}"
+CUSTOM_MESSAGE="${2:-}"
 
 # Validate tag format
 if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -30,6 +36,33 @@ if git rev-parse "$VERSION" >/dev/null 2>&1; then
     exit 1
 fi
 
+# Generate release notes from commits since last tag
+if [ "$CURRENT_TAG" = "none" ]; then
+    GIT_LOG=$(git log --pretty=format:"- %s" HEAD)
+else
+    GIT_LOG=$(git log --pretty=format:"- %s" "$CURRENT_TAG"..HEAD)
+fi
+
+if [ -z "$GIT_LOG" ]; then
+    GIT_LOG="- No changes since $CURRENT_TAG"
+fi
+
+TAG_MESSAGE="Release $VERSION"
+if [ -n "$CUSTOM_MESSAGE" ]; then
+    TAG_MESSAGE="$TAG_MESSAGE
+
+$CUSTOM_MESSAGE"
+fi
+TAG_MESSAGE="$TAG_MESSAGE
+
+Changes since $CURRENT_TAG:
+$GIT_LOG"
+
+echo ""
+echo "Release notes:"
+echo "$GIT_LOG"
+echo ""
+
 echo "Building debug APK..."
 ./project_01_android/gradlew -p ./project_01_android assembleDebug
 
@@ -48,7 +81,7 @@ echo "Debug APK built successfully ($APK_SIZE): $APK"
 
 echo ""
 echo "Creating tag $VERSION..."
-git tag -a "$VERSION" -m "$MESSAGE"
+git tag -a "$VERSION" -m "$TAG_MESSAGE"
 
 echo "Pushing tag to origin..."
 git push origin "$VERSION"

@@ -47,15 +47,16 @@ Three layers handle connectivity:
 
 1. **Wi-Fi Direct (P2P layer):** `p2p/ConnectionService.kt` and `p2p/WifiDirectBroadcastReceiver.kt` manage device discovery and P2P connections using Android's WifiP2pManager API. ConnectionService is a background service that maintains the connection when the screen is off.
 
-2. **Game state sync (Session layer):** `GameSync` wraps `NetworkManager` (interface) with `SocketNetworkManager` as the TCP socket implementation. Server listens on port 8888. Uses `ObjectInputStream`/`ObjectOutputStream` for serialization. Broadcasts messages to all connected clients via a `clients: Map<String, Socket>`.
+2. **Game state sync (Session layer):** `GameSync` wraps `NetworkManager` (interface) with `SocketNetworkManager` as the TCP socket implementation. Server listens on port 8888. Uses kotlinx.serialization JSON with a 4-byte length-prefixed wire format (`MessageEnvelope` for encode/decode). All network messages implement the `GameMessage` sealed interface. Broadcasts messages to all connected clients via a `clients: Map<String, OutputStream>`.
 
 3. **File transfer:** `FileTransfer` uses a separate `ServerSocket` for binary transfers with an 8-byte file size header followed by content. Emits progress/success/failure events via Flow.
 
 ### Key Data Flow
 
 - Game master creates a game → starts TCP server → other devices connect via Wi-Fi Direct
-- Players join with a password (`PasswordMessage`/`PasswordResponseMessage`)
-- Game master broadcasts: `PlaybackCommand` (PLAY_PAUSE, NEXT, PREVIOUS), `PlaybackState` (sync position), `AdvancedCommand` (TURN_OFF_SCREEN, DEACTIVATE_TORCH), video playlists as `List<Video>`
+- Players join with a password via challenge-response: server sends `PasswordChallenge(nonce)`, client replies with `PasswordMessage(SHA-256(password + nonce))`, server verifies and sends `PasswordResponseMessage(success)`
+- Game master broadcasts: `PlaybackCommand` (PLAY_PAUSE, NEXT, PREVIOUS), `PlaybackState` (sync position), `AdvancedCommand` (TURN_OFF_SCREEN, DEACTIVATE_TORCH), video playlists as `VideoListMessage`
+- Clients auto-reconnect on disconnect via `ReconnectionManager` (exponential backoff with jitter, max 10 retries)
 - Videos are transferred to player devices' local storage via FileTransfer so playback works on slow/intermittent connections
 
 ### Reactive Patterns
@@ -68,7 +69,8 @@ Three layers handle connectivity:
 ## Tech Stack
 
 - **Min SDK 24 / Target SDK 34**, Compile SDK 34, Java target 11
-- **Kotlin 1.9.22**, Android Gradle Plugin 8.4.1
+- **Kotlin 1.9.22**, Android Gradle Plugin 8.4.1, Gradle 9.2.1
+- **Serialization:** kotlinx.serialization 1.6.2 (JSON)
 - **Video:** ExoPlayer (media3 1.2.1)
 - **UI:** XML layouts with ConstraintLayout, Material Design
 - **Navigation:** AndroidX Navigation (fragment-based)
@@ -77,16 +79,28 @@ Three layers handle connectivity:
 ## Development Conventions
 
 - All source code is under `project_01_android/app/src/main/java/com/project01/`
-- Data classes use `@Parcelize` (Player, Video) or `Serializable` (PlaybackState, PasswordMessage)
+- All network message types implement `GameMessage` sealed interface with `@Serializable` annotations; `classDiscriminator = "msg_type"` (not "type" — clashes with PlaybackCommand's `type` field)
+- `VideoDto` bridges `Video` (uses Android `Uri`) to serializable form; extension functions `Video.toDto()` / `VideoDto.toVideo()` in Video.kt
+- Data classes use `@Parcelize` (Player, Video)
 - `GameRepository` constructs dependencies directly (no DI framework): `GameSync(SocketNetworkManager())`, `FileTransfer()`
 - `GameViewModel` takes `GameRepository` as a default constructor parameter
 - `TestNetworkManager` in the test directory provides a mock `NetworkManager` for unit tests
+- `PasswordHasher` object handles nonce generation (`SecureRandom`) and SHA-256 hashing
+- `ReconnectionManager` uses `StateFlow<ReconnectionState>` observed by GameViewModel via `collectLatest`
+- App version derived from git tags at build time (`build.gradle`); `versionName` from latest `v*` tag, `versionCode` from tag count
 - Permissions are currently handled with `@SuppressLint("MissingPermission")` — explicit runtime permission handling is planned
+
+## Releases
+
+- Tag-based releases: `./release.sh v1.0.0 "Optional message"` creates a git tag and pushes it
+- GitHub Actions workflow (`.github/workflows/release.yml`) builds the APK and creates a GitHub release on tag push
+- Release notes auto-generated from commit messages since the last tag
 
 ## Known Technical Debt
 
-See `IMPLEMENTATION_PLAN.md` for the full improvement roadmap. Key items:
+See `IMPLEMENTATION_PLAN.md` for the full improvement roadmap. Key remaining items:
 - Error handling uses `e.printStackTrace()` — needs proper logging and UI error feedback
-- Serialization via ObjectInputStream/ObjectOutputStream is fragile — planned migration to JSON (Gson/Moshi)
 - Runtime permissions need explicit handling
+- ConnectionService needs foreground service conversion for battery/doze resilience
+- FileTransfer lacks checksum validation and retry logic
 - Test coverage is incomplete, especially for UI and networking logic

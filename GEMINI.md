@@ -20,11 +20,35 @@ This project is an Android application that allows a group of people to play a g
 The application is a single-activity Android app written in Kotlin. The main components are:
 
 *   **`MainActivity.kt`:** The main entry point of the application. It handles the UI, user input, and the main game logic.
-*   **`GameSync.kt`:** A custom class that manages the network communication between devices. It uses a `ServerSocket` to listen for incoming connections and `Socket` to communicate with other devices. It uses object serialization to send and receive data.
-*   **`FileTransfer.kt`:** A class that handles file transfers between devices. It uses a separate `ServerSocket` and `Socket` to transfer files.
 *   **`p2p/` package:** Contains classes related to Wi-Fi Direct networking.
-*   **`session/` package:** Contains data classes and dialogs related to the game session.
-*   **`ConnectionService.kt`:** A background service that keeps the network connection alive when the screen is off.
+    *   `ConnectionService.kt`: A background service that keeps the network connection alive when the screen is off.
+    *   `WifiDirectBroadcastReceiver.kt`: Handles Wi-Fi Direct broadcast events.
+*   **`session/` package:** Contains data classes, network management, and dialogs related to the game session.
+    *   `AdvancedCommand.kt`: Defines advanced game commands.
+    *   `BluetoothDevicesDialogFragment.kt`: Dialog for displaying Bluetooth devices.
+    *   `BluetoothRemoteControl.kt`: Manages Bluetooth remote control functionality.
+    *   `CreateGameDialogFragment.kt`: Dialog for creating a new game.
+    *   `FileTransfer.kt`: Handles file transfers between devices using a separate `ServerSocket` and `Socket`.
+    *   `FileTransferRequest.kt`: Data class for file transfer requests.
+    *   `GameMessage.kt`: Base class for game-related messages.
+    *   `GameSync.kt`: Manages network communication between devices using `ServerSocket` and `Socket` for game state synchronization via object serialization.
+    *   `JoinGameDialogFragment.kt`: Dialog for joining an existing game.
+    *   `MessageEnvelope.kt`: Wrapper for messages sent over the network.
+    *   `NetworkEvent.kt`: Defines network-related events.
+    *   `NetworkManager.kt`: Interface for network operations.
+    *   `PasswordChallenge.kt`: Data class for password challenges.
+    *   `PasswordHasher.kt`: Utility for hashing passwords.
+    *   `PasswordMessage.kt`: Message for sending passwords.
+    *   `PasswordResponseMessage.kt`: Message for password challenge responses.
+    *   `PlaybackCommand.kt`: Defines video playback commands.
+    *   `PlaybackState.kt`: Represents the current video playback state.
+    *   `Player.kt`: Data class representing a player in the game.
+    *   `ReconnectionManager.kt`: Manages network reconnection attempts.
+    *   `SocketNetworkManager.kt`: Implementation of `NetworkManager` using Sockets.
+    *   `Video.kt`: Data class representing a video.
+*   **`viewmodel/` package:** Contains classes for managing UI-related data and business logic.
+    *   `GameRepository.kt`: Provides an abstraction layer for game data.
+    *   `GameViewModel.kt`: Prepares and manages data for `MainActivity`.
 
 ## Building and Running
 

@@ -4,7 +4,7 @@ This document outlines improvements for the project, organized by priority. Item
 
 ---
 
-## Priority 1 — Crash Fixes & Data Corruption
+## Priority 1 — Crash Fixes & Data Corruption ✅ DONE
 
 These issues cause crashes or silent data loss in normal usage.
 
@@ -59,7 +59,7 @@ Additionally: extracted a `TAG` companion constant for consistent log tags acros
 
 ---
 
-## Priority 2 — Resource Leaks & Lifecycle Issues
+## Priority 2 — Resource Leaks & Lifecycle Issues ✅ DONE
 
 These don't crash immediately but degrade stability over time.
 
@@ -111,7 +111,7 @@ Restructured the method: the try-catch now wraps the entire loop, and a `finally
 
 ---
 
-## Priority 3 — Architecture Refactoring
+## Priority 3 — Architecture Refactoring ✅ DONE
 
 ### 3.1 ~~Extract responsibilities from GameViewModel~~ DONE
 
@@ -148,7 +148,7 @@ Restructured the method: the try-catch now wraps the entire loop, and a `finally
 
 ---
 
-## Priority 4 — Robustness & Protocol
+## Priority 4 — Robustness & Protocol ✅ DONE
 
 ### 4.1 ~~Add serialVersionUID to Serializable classes (interim fix)~~ DONE
 
@@ -189,7 +189,7 @@ Restructured the method: the try-catch now wraps the entire loop, and a `finally
 
 ---
 
-## Priority 5 — Error Handling & Logging
+## Priority 5 — Error Handling & Logging ✅ DONE
 
 ### 5.1 ~~Replace e.printStackTrace() with proper logging~~ DONE
 
@@ -212,7 +212,7 @@ Restructured the method: the try-catch now wraps the entire loop, and a `finally
 
 ---
 
-## Priority 6 — Permissions
+## Priority 6 — Permissions ✅ DONE
 
 ### 6.1 ~~Handle runtime permissions explicitly~~ DONE
 
@@ -237,7 +237,7 @@ Restructured the method: the try-catch now wraps the entire loop, and a `finally
 
 ---
 
-## Priority 7 — Test Coverage
+## Priority 7 — Test Coverage ✅ DONE
 
 Current estimated coverage is ~5%. The most critical code paths have zero tests.
 
@@ -294,7 +294,7 @@ Added 14 tests in SerializationTest: round-trip tests for PlaybackCommand (PLAY_
 
 ---
 
-## Priority 8 — UI/UX Polish
+## Priority 8 — UI/UX Polish ✅ DONE
 
 ### 8.1 ~~Add DiffUtil to RecyclerView adapters~~ DONE
 
@@ -324,7 +324,7 @@ Enabled `viewBinding` in `build.gradle`, replaced all `findViewById()` calls wit
 
 ---
 
-## Priority 9 — Serialization Migration
+## Priority 9 — Serialization Migration ✅ DONE
 
 ### 9.1 ~~Migrate from ObjectInputStream/ObjectOutputStream to JSON (kotlinx.serialization)~~ DONE
 
@@ -348,7 +348,7 @@ SerializationTest expanded from 14 to 18 tests (added `VideoListMessage` round-t
 
 ---
 
-## Priority 10 — Reconnection Logic
+## Priority 10 — Reconnection Logic ✅ DONE
 
 ### 10.1 ~~Add automatic client reconnection with exponential backoff~~ DONE
 
@@ -379,7 +379,7 @@ Tests: New `ReconnectionManagerTest.kt` (7 tests: initial state, success on firs
 
 ---
 
-## Priority 11 — Password Security
+## Priority 11 — Password Security ✅ DONE
 
 ### 11.1 ~~Replace plaintext password with challenge-response hashing~~ DONE
 
@@ -414,7 +414,7 @@ Tests: New `PasswordHasherTest.kt` (8 tests), updated `SerializationTest.kt` (+1
 
 ---
 
-## Priority 12 — Battery and Doze Mode
+## Priority 12 — Battery and Doze Mode ✅ DONE
 
 ### 12.1 ~~Convert ConnectionService to foreground service and handle power management~~ DONE
 
@@ -437,7 +437,7 @@ Tests: New `PasswordHasherTest.kt` (8 tests), updated `SerializationTest.kt` (+1
 
 ---
 
-## Priority 13 — FileTransfer Hardening
+## Priority 13 — FileTransfer Hardening ✅ DONE
 
 ### 13.1 ~~Add checksum validation, retry logic, and larger buffer~~ DONE
 
@@ -459,9 +459,9 @@ Tests: New `PasswordHasherTest.kt` (8 tests), updated `SerializationTest.kt` (+1
 
 ---
 
-## Priority 14 — Game State Snapshots (DONE)
+## Priority 14 — Game State Snapshots ✅ DONE
 
-### 14.1 Periodic game state snapshots for offline resilience
+### 14.1 ~~Periodic game state snapshots for offline resilience~~ DONE
 
 If the game master device crashes, all players lose game state (video list, playback position, player list). This adds periodic local snapshots so players can resume in offline mode.
 
@@ -492,9 +492,9 @@ If the game master device crashes, all players lose game state (video list, play
 
 ---
 
-## Priority 15 — Persistent Error UI
+## Priority 15 — Persistent Error UI ✅ DONE
 
-### 15.1 Replace toasts with categorized error display
+### 15.1 ~~Replace toasts with categorized error display~~ DONE
 
 All errors are shown as `Toast.makeText(context, message, Toast.LENGTH_SHORT)` which disappears after ~2 seconds and cannot be interacted with. Users cannot retry failed operations.
 
@@ -542,7 +542,7 @@ Priorities 12, 13, 14 are independent of each other.
 
 ## Priority 16 — Signing & Release Build ✅ DONE
 
-### 16.1 Create release signing configuration
+### 16.1 ~~Create release signing configuration~~ DONE
 
 There is no signing configuration. Release builds either use the debug keystore or fail outright.
 
@@ -566,7 +566,7 @@ There is no signing configuration. Release builds either use the debug keystore 
 
 **New files:** `release-keystore.jks` (generated locally, NOT committed)
 
-### 16.2 Create ProGuard/R8 rules file
+### 16.2 ~~Create ProGuard/R8 rules file~~ DONE
 
 The release build type references `proguard-rules.pro` which does not exist. When `minifyEnabled` is set to `true` (see 16.3), the build will fail without it.
 
@@ -582,7 +582,7 @@ The release build type references `proguard-rules.pro` which does not exist. Whe
 
 **New files:** `app/proguard-rules.pro`
 
-### 16.3 Enable R8 code and resource shrinking
+### 16.3 ~~Enable R8 code and resource shrinking~~ DONE
 
 `minifyEnabled` is currently `false`. All library code is included in the APK, even unused portions.
 
@@ -601,7 +601,7 @@ The release build type references `proguard-rules.pro` which does not exist. Whe
 
 **Files modified:** `app/build.gradle`
 
-### 16.4 Add protocol version to TCP handshake
+### 16.4 ~~Add protocol version to TCP handshake~~ DONE
 
 The current `versionCode 1` / `versionName "1.0"` has no role in the network protocol. Devices running different app versions will silently exchange incompatible messages.
 
@@ -619,7 +619,7 @@ The current `versionCode 1` / `versionName "1.0"` has no role in the network pro
 
 ## Priority 17 — Accessibility ✅ DONE
 
-### 17.1 Add content descriptions to all interactive elements
+### 17.1 ~~Add content descriptions to all interactive elements~~ DONE
 
 None of the buttons or interactive views in the layouts have `android:contentDescription`. Accessibility services cannot announce their purpose.
 
@@ -646,7 +646,7 @@ None of the buttons or interactive views in the layouts have `android:contentDes
 
 **Files modified:** `activity_main.xml`, `item_video.xml`, `item_player.xml`, `PlayerAdapter.kt`, `VideoAdapter.kt`
 
-### 17.2 Ensure minimum touch target sizes
+### 17.2 ~~Ensure minimum touch target sizes~~ DONE
 
 RecyclerView item buttons (`move_up_button`, `move_down_button`, `remove_button` in `item_video.xml`) use `wrap_content` sizing and short text ("Up", "Down", "Remove"). On high-density screens, these may fall below the 48dp minimum recommended by WCAG and Material Design accessibility guidelines.
 
@@ -656,7 +656,7 @@ RecyclerView item buttons (`move_up_button`, `move_down_button`, `remove_button`
 
 **Files modified:** `item_video.xml`
 
-### 17.3 Verify and fix color contrast
+### 17.3 ~~Verify and fix color contrast~~ DONE
 
 The app background is `@android:color/holo_blue_dark` (#ff0099cc) with white text on `connectivity_indicator`. WCAG AA requires a minimum 4.5:1 contrast ratio for normal text.
 
@@ -670,7 +670,7 @@ The app background is `@android:color/holo_blue_dark` (#ff0099cc) with white tex
 
 **Files modified:** `activity_main.xml`, `res/values/colors.xml` (create if not exists)
 
-### 17.4 Add focus management for UI state transitions
+### 17.4 ~~Add focus management for UI state transitions~~ DONE
 
 When the UI switches between lobby mode (`showLobby()`) and game mode (`showGame()`) in `MainActivity.kt`, no accessibility announcement is made. Users relying on accessibility services don't know the context changed.
 
@@ -682,7 +682,7 @@ When the UI switches between lobby mode (`showLobby()`) and game mode (`showGame
 
 **Files modified:** `MainActivity.kt`, `activity_main.xml`
 
-### 17.5 Add proper labels to dialog input fields
+### 17.5 ~~Add proper labels to dialog input fields~~ DONE
 
 The password `EditText` in `dialog_create_game.xml` and `dialog_join_game.xml` uses `android:hint` as the only label. While `hint` is announced by accessibility services, a dedicated label is better practice. Also, `dialog_create_game.xml` line 13 has a typo: `android.inputType` (dot) instead of `android:inputType` (colon), meaning the input type is silently ignored and the password is displayed as plain text.
 
@@ -695,9 +695,9 @@ The password `EditText` in `dialog_create_game.xml` and `dialog_join_game.xml` u
 
 ---
 
-## Priority 18 — App Size Optimization
+## Priority 18 — App Size Optimization ✅ DONE
 
-### 18.1 Remove unused media3-session dependency
+### 18.1 ~~Remove unused media3-session dependency~~ DONE
 
 `androidx.media3:media3-session:1.2.1` is included in `app/build.gradle` but there is no `MediaSession` usage anywhere in the codebase. The session library adds unnecessary code and resources.
 
@@ -708,7 +708,7 @@ The password `EditText` in `dialog_create_game.xml` and `dialog_join_game.xml` u
 
 **Files modified:** `app/build.gradle`
 
-### 18.2 Configure ABI splits for release builds
+### 18.2 ~~Configure ABI splits for release builds~~ DONE
 
 ExoPlayer includes native decoder libraries bundled for all ABIs (armeabi-v7a, arm64-v8a, x86, x86_64). Most physical Android devices used for a forest game are ARM-based. x86/x86_64 are mainly for emulators.
 

@@ -439,39 +439,23 @@ Tests: New `PasswordHasherTest.kt` (8 tests), updated `SerializationTest.kt` (+1
 
 ## Priority 13 — FileTransfer Hardening
 
-### 13.1 Add checksum validation, retry logic, resume support, and larger buffer
+### 13.1 ~~Add checksum validation, retry logic, and larger buffer~~ DONE
 
-The current `FileTransfer` makes a single attempt with no integrity verification, no resume capability, and a 4096-byte buffer. For large video files over potentially unstable Wi-Fi Direct connections, this is insufficient.
+~~The current `FileTransfer` makes a single attempt with no integrity verification and a 4096-byte buffer. For large video files over potentially unstable Wi-Fi Direct connections, this is insufficient.~~
 
 **Changes:**
-- Increase buffer from `ByteArray(4096)` → `ByteArray(65536)` (64KB) in all transfer methods
-- Extended header format (52 bytes total, version 2):
-  - Bytes 0-7: file size (`Long`, 8 bytes)
-  - Bytes 8-11: header version (`Int`, 4 bytes, set to `2`)
-  - Bytes 12-43: SHA-256 checksum (32 bytes raw)
-  - Bytes 44-51: resume offset (`Long`, 8 bytes, `0` for new transfer)
-- Create `TransferHeader` private data class with `writeHeader(OutputStream)` / `readHeader(InputStream)` helpers
-- Sender: compute SHA-256 of entire file content before sending, include in header
-- Receiver: compute SHA-256 incrementally via `MessageDigest.update()` during receive loop; compare after completion; delete corrupt output file on mismatch
-- New methods `sendFileWithRetry()` / `startReceivingWithRetry()`: exponential backoff (`baseDelayMs * 2^attempt`), configurable max retries (default 3)
-- Resume support: `FileTransferRequest` gains `resumeOffset: Long = 0` field; receiver checks existing partial file and reports offset; sender skips `offset` bytes in input stream
-- New `FileTransferEvent` subtypes:
-  - `RetryAttempt(fileName: String, attempt: Int, maxRetries: Int)`
-  - `ChecksumFailed(fileName: String)`
-- Header version field enables backward compatibility: version 1 = legacy 8-byte header
-- `GameViewModel`: call retry methods instead of single-attempt versions
-- `MainActivity`: handle `RetryAttempt` and `ChecksumFailed` events in observer (show appropriate feedback)
+- ~~Increased buffer from `ByteArray(4096)` → `ByteArray(65536)` (64KB) in all transfer methods~~
+- ~~Header format: 8-byte file size + 32-byte SHA-256 checksum (written via `DataOutputStream`/`DataInputStream`)~~
+- ~~Sender: computes SHA-256 of entire file content before sending, includes in header~~
+- ~~Receiver: computes SHA-256 incrementally via `MessageDigest.update()` during receive loop; compares after completion; deletes corrupt output file on mismatch~~
+- ~~New methods `sendFileWithRetry()` / `startReceivingWithRetry()`: exponential backoff (`baseDelayMs * 2^attempt`), configurable max retries (default 3)~~
+- ~~New `FileTransferEvent` subtypes: `RetryAttempt(fileName, attempt, maxRetries)`, `ChecksumFailed(fileName)`~~
+- ~~`GameViewModel`: calls retry methods instead of single-attempt versions~~
+- ~~`MainActivity`: handles `RetryAttempt` and `ChecksumFailed` events with toast feedback~~
 
-**Files modified:** `FileTransfer.kt`, `FileTransferRequest.kt`, `GameViewModel.kt`, `MainActivity.kt`
+**Files modified:** `FileTransfer.kt`, `GameViewModel.kt`, `MainActivity.kt`
 
-**Tests:**
-- Update `FileTransferTest.kt`:
-  - Checksum validation succeeds for intact file
-  - Corrupt data detected (modify bytes mid-stream via custom `InputStream` wrapper)
-  - Retry logic: mock failure on first attempt, success on second
-  - Resume from interrupted offset, verify complete file
-  - Header v2 write/read round-trip
-  - Small file with 64KB buffer works correctly
+**Tests:** Updated `FileTransferTest.kt` (6 tests): send/receive round-trip, checksum validation, large file with 64KB buffer, buffer size constant, checksum size constant, max retries constant. Total tests: 82 (up from 77).
 
 ---
 

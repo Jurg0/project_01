@@ -233,13 +233,13 @@ class GameViewModel(application: Application, val repository: GameRepository = G
                 val video = videos.value?.find { it.title == request.fileName }
                 if (video != null) {
                     viewModelScope.launch {
-                        repository.fileTransfer.sendFile(request.senderAddress, request.port, video.uri, getApplication<Application>().contentResolver)
+                        repository.fileTransfer.sendFileWithRetry(request.senderAddress, request.port, video.uri, getApplication<Application>().contentResolver)
                     }
                 }
             } else {
                 val outputFile = File(getApplication<Application>().filesDir, request.fileName)
                 viewModelScope.launch {
-                    repository.fileTransfer.startReceiving(request.port, outputFile)
+                    repository.fileTransfer.startReceivingWithRetry(request.port, outputFile)
                 }
             }
         }

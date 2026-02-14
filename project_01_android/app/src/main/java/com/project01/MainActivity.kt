@@ -228,6 +228,12 @@ class MainActivity : AppCompatActivity() {
                 is com.project01.session.FileTransferEvent.Failure -> {
                     Toast.makeText(this, "Transfer failed: ${event.fileName}", Toast.LENGTH_SHORT).show()
                 }
+                is com.project01.session.FileTransferEvent.RetryAttempt -> {
+                    Toast.makeText(this, "Retrying transfer (${event.attempt}/${event.maxRetries}): ${event.fileName}", Toast.LENGTH_SHORT).show()
+                }
+                is com.project01.session.FileTransferEvent.ChecksumFailed -> {
+                    Toast.makeText(this, "File corrupted during transfer: ${event.fileName}", Toast.LENGTH_LONG).show()
+                }
             }
         })
     }

@@ -35,7 +35,13 @@ project_01_android/app/build/outputs/apk/debug/app-debug.apk
 ./project_01_android/gradlew -p ./project_01_android assembleRelease
 ```
 
-> **Note:** Release builds require a signing configuration. See `IMPLEMENTATION_PLAN.md` Priority 16 for setup instructions.
+Release builds require a signing keystore. See [Setting Up Release Signing](#setting-up-release-signing) below.
+
+The signed release APK is output to:
+
+```
+project_01_android/app/build/outputs/apk/release/app-release.apk
+```
 
 ## Running Tests
 
@@ -129,7 +135,48 @@ git push origin v1.0.0
 
 The `.github/workflows/release.yml` workflow triggers on any `v*` tag push. It builds the debug APK in CI and creates a GitHub release with the APK attached as a downloadable asset.
 
-Once release signing is configured (see `IMPLEMENTATION_PLAN.md` Priority 16), the workflow can be extended to also build and attach a signed release APK.
+To also build and attach a signed release APK, uncomment the release build lines in `.github/workflows/release.yml` (search for `SIGNING_TODO`) and configure the signing secrets in your GitHub repository settings. See [Setting Up Release Signing](#setting-up-release-signing).
+
+## Setting Up Release Signing
+
+The `build.gradle` signing config reads credentials from `local.properties` or environment variables. To enable signed release builds:
+
+### 1. Generate a keystore
+
+```bash
+keytool -genkey -v -keystore release-keystore.jks -keyalg RSA -keysize 2048 -validity 10000 -alias project01
+```
+
+Store this file securely outside the repository. The `.gitignore` already excludes `*.jks` and `*.keystore`.
+
+### 2. Configure local builds
+
+Add to `project_01_android/local.properties` (already git-ignored):
+
+```properties
+RELEASE_STORE_FILE=/absolute/path/to/release-keystore.jks
+RELEASE_STORE_PASSWORD=your_store_password
+RELEASE_KEY_ALIAS=project01
+RELEASE_KEY_PASSWORD=your_key_password
+```
+
+You can now build locally with `assembleRelease`.
+
+### 3. Configure CI (GitHub Actions)
+
+Add these as repository secrets (Settings > Secrets and variables > Actions):
+
+| Secret | Value |
+|---|---|
+| `RELEASE_STORE_FILE` | Absolute path to the keystore (or base64-encode it and decode in the workflow) |
+| `RELEASE_STORE_PASSWORD` | Keystore password |
+| `RELEASE_KEY_ALIAS` | `project01` (or your chosen alias) |
+| `RELEASE_KEY_PASSWORD` | Key password |
+
+Then uncomment the release build lines in these files (search for `SIGNING_TODO`):
+
+- **`release.sh`** — local release APK build
+- **`.github/workflows/release.yml`** — CI release APK build and upload
 
 ## Roadmap
 

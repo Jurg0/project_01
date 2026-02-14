@@ -45,11 +45,11 @@ FileTransfer (Binary file transfer, separate TCP connection)
 
 Three layers handle connectivity:
 
-1. **Wi-Fi Direct (P2P layer):** `p2p/ConnectionService.kt` and `p2p/WifiDirectBroadcastReceiver.kt` manage device discovery and P2P connections using Android's WifiP2pManager API. ConnectionService is a background service that maintains the connection when the screen is off.
+1. **Wi-Fi Direct (P2P layer):** `p2p/ConnectionService.kt` and `p2p/WifiDirectBroadcastReceiver.kt` manage device discovery and P2P connections using Android's WifiP2pManager API. ConnectionService is a foreground service with a wake lock and Wi-Fi lock to maintain the connection through screen-off and doze mode.
 
-2. **Game state sync (Session layer):** `GameSync` wraps `NetworkManager` (interface) with `SocketNetworkManager` as the TCP socket implementation. Server listens on port 8888. Uses kotlinx.serialization JSON with a 4-byte length-prefixed wire format (`MessageEnvelope` for encode/decode). All network messages implement the `GameMessage` sealed interface. Broadcasts messages to all connected clients via a `clients: Map<String, OutputStream>`.
+2. **Game state sync (Session layer):** `GameSync` wraps `NetworkManager` (interface) with `SocketNetworkManager` as the TCP socket implementation. Server listens on port 8888. Uses kotlinx.serialization JSON with a 4-byte length-prefixed wire format (`MessageEnvelope` for encode/decode). All network messages implement the `GameMessage` sealed interface. `MessageEnvelope.PROTOCOL_VERSION` is sent in the `PasswordChallenge` handshake to detect version mismatches between devices. Broadcasts messages to all connected clients via a `clients: Map<String, OutputStream>`.
 
-3. **File transfer:** `FileTransfer` uses a separate `ServerSocket` for binary transfers with an 8-byte file size header followed by content. Emits progress/success/failure events via Flow.
+3. **File transfer:** `FileTransfer` uses a separate `ServerSocket` for binary video transfers with a 64KB buffer. Files are sent with an 8-byte size header and 32-byte SHA-256 checksum for integrity validation. Failed transfers retry automatically with exponential backoff (up to 3 attempts). Emits progress/success/failure events via Flow.
 
 ### Key Data Flow
 
@@ -58,6 +58,8 @@ Three layers handle connectivity:
 - Game master broadcasts: `PlaybackCommand` (PLAY_PAUSE, NEXT, PREVIOUS), `PlaybackState` (sync position), `AdvancedCommand` (TURN_OFF_SCREEN, DEACTIVATE_TORCH), video playlists as `VideoListMessage`
 - Clients auto-reconnect on disconnect via `ReconnectionManager` (exponential backoff with jitter, max 10 retries)
 - Videos are transferred to player devices' local storage via FileTransfer so playback works on slow/intermittent connections
+- Game master periodically broadcasts a `GameStateSnapshot` so all devices can resume after a crash
+- Protocol version is checked during the `PasswordChallenge` handshake; mismatched versions show a `UiError.Critical` to the user
 
 ### Reactive Patterns
 
@@ -96,11 +98,11 @@ Three layers handle connectivity:
 - GitHub Actions workflow (`.github/workflows/release.yml`) builds the APK and creates a GitHub release on tag push
 - Release notes auto-generated from commit messages since the last tag
 
+## Release Signing
+
+The `build.gradle` signing config reads from `local.properties` or environment variables. Release builds use R8 code shrinking (`minifyEnabled true`, `shrinkResources true`) with ProGuard rules in `app/proguard-rules.pro`. See `README.md` for full setup instructions. Files with `SIGNING_TODO` comments (`release.sh`, `.github/workflows/release.yml`) need uncommenting once the keystore and CI secrets are configured.
+
 ## Known Technical Debt
 
 See `IMPLEMENTATION_PLAN.md` for the full improvement roadmap. Key remaining items:
-- Error handling uses `e.printStackTrace()` — needs proper logging and UI error feedback
-- Runtime permissions need explicit handling
-- ConnectionService needs foreground service conversion for battery/doze resilience
-- FileTransfer lacks checksum validation and retry logic
-- Test coverage is incomplete, especially for UI and networking logic
+- Runtime permissions need explicit handling (currently uses `@SuppressLint("MissingPermission")`)

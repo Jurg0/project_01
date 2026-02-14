@@ -6,7 +6,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -41,7 +41,7 @@ class SocketNetworkManagerTest {
     }
 
     @Test
-    fun `server accepts client connection`() = runTest {
+    fun `server accepts client connection`() = runBlocking {
         manager.startServer()
         delay(200)
 
@@ -65,7 +65,7 @@ class SocketNetworkManagerTest {
     }
 
     @Test
-    fun `broadcast delivers message to connected client`() = runTest {
+    fun `broadcast delivers message to connected client`() = runBlocking {
         manager.startServer()
         delay(200)
 
@@ -92,7 +92,7 @@ class SocketNetworkManagerTest {
     }
 
     @Test
-    fun `shutdown closes server socket and rejects new connections`() = runTest {
+    fun `shutdown closes server socket and rejects new connections`() = runBlocking {
         manager.startServer()
         delay(200)
 
@@ -118,7 +118,7 @@ class SocketNetworkManagerTest {
     }
 
     @Test
-    fun `server sends PasswordChallenge to new client`() = runTest {
+    fun `server sends PasswordChallenge to new client`() = runBlocking {
         manager.startServer()
         delay(200)
 
@@ -137,7 +137,7 @@ class SocketNetworkManagerTest {
     }
 
     @Test
-    fun `consumeNonce returns and removes stored nonce`() = runTest {
+    fun `consumeNonce returns and removes stored nonce`() = runBlocking {
         manager.startServer()
         delay(200)
 
@@ -163,7 +163,7 @@ class SocketNetworkManagerTest {
     }
 
     @Test
-    fun `ClientConnected event emitted when client connects`() = runTest {
+    fun `ClientConnected event emitted when client connects`() = runBlocking {
         manager.startServer()
         delay(200)
 
@@ -183,7 +183,7 @@ class SocketNetworkManagerTest {
     }
 
     @Test
-    fun `broadcast delivers different messages in order`() = runTest {
+    fun `broadcast delivers different messages in order`() = runBlocking {
         manager.startServer()
         delay(200)
 

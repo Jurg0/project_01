@@ -66,7 +66,7 @@ echo ""
 echo "Building debug APK..."
 ./project_01_android/gradlew -p ./project_01_android assembleDebug
 
-# Uncomment after setting up signing (Priority 16):
+# SIGNING_TODO: Uncomment after setting up release signing (see README.md):
 # echo "Building release APK..."
 # ./project_01_android/gradlew -p ./project_01_android assembleRelease
 

@@ -32,6 +32,7 @@ class WifiDirectBroadcastReceiver(
                 val thisDevice = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     intent.getParcelableExtra(WifiP2pManager.EXTRA_WIFI_P2P_DEVICE, WifiP2pDevice::class.java)
                 } else {
+                    @Suppress("DEPRECATION")
                     intent.getParcelableExtra(WifiP2pManager.EXTRA_WIFI_P2P_DEVICE)
                 }
                 if (thisDevice != null) {

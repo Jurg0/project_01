@@ -103,11 +103,16 @@ class SocketNetworkManagerTest {
 
         manager.shutdown()
 
+        // Retry a few times to give the OS time to fully close the socket
         var connectionRefused = false
-        try {
-            Socket("127.0.0.1", manager.port).close()
-        } catch (e: Exception) {
-            connectionRefused = true
+        for (attempt in 1..5) {
+            delay(200)
+            try {
+                Socket("127.0.0.1", manager.port).close()
+            } catch (e: Exception) {
+                connectionRefused = true
+                break
+            }
         }
         assertTrue("Server should refuse new connections after shutdown", connectionRefused)
     }

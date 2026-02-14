@@ -192,7 +192,7 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
         })
 
-        gameViewModel.thisDevice.observe(this, Observer { device ->
+        gameViewModel.thisDevice.observe(this, Observer { _ ->
             // Do something with the device info if needed
         })
 

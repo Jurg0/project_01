@@ -72,18 +72,20 @@ FileTransfer (Binary file transfer, separate TCP connection)
 
 Three layers handle connectivity:
 
-1. **Wi-Fi Direct (P2P layer):** Device discovery and group formation via Android's `WifiP2pManager` API. `ConnectionService` maintains the connection when the screen is off.
+1. **Wi-Fi Direct (P2P layer):** Device discovery and group formation via Android's `WifiP2pManager` API. `ConnectionService` runs as a foreground service to maintain the Wi-Fi Direct connection through screen-off and doze mode.
 
 2. **Game state sync (Session layer):** `SocketNetworkManager` implements TCP socket communication on port 8888. Uses a 4-byte length-prefixed JSON wire format via `kotlinx.serialization`. All message types implement the `GameMessage` sealed interface for compile-time type safety.
 
-3. **File transfer:** `FileTransfer` uses a separate `ServerSocket` for binary video transfers with an 8-byte file size header. Emits progress/success/failure events via Kotlin `Flow`.
+3. **File transfer:** `FileTransfer` uses a separate `ServerSocket` for binary video transfers with a 64KB buffer. Files are sent with an 8-byte size header and 32-byte SHA-256 checksum for integrity validation. Failed transfers retry automatically with exponential backoff (up to 3 attempts). Emits progress/success/failure events via Kotlin `Flow`.
 
 ### Key Data Flow
 
-- Game master creates a game and starts a TCP server
-- Players connect via Wi-Fi Direct and authenticate with a password
+- Game master creates a game and starts a TCP server; other devices connect via Wi-Fi Direct
+- Players authenticate via challenge-response: server sends a nonce, client replies with SHA-256(password + nonce)
 - Game master broadcasts: `PlaybackCommand` (play/pause, next, previous), `PlaybackState` (position sync), `AdvancedCommand` (screen off, torch off), and video playlists
 - Videos are transferred to player devices' local storage so playback works on intermittent connections
+- Clients auto-reconnect on disconnect via `ReconnectionManager` (exponential backoff with jitter, max 10 retries)
+- Game master periodically broadcasts a `GameStateSnapshot` so all devices can resume after a crash
 
 ## Tech Stack
 
@@ -97,39 +99,6 @@ Three layers handle connectivity:
 | Navigation | AndroidX Navigation (fragment-based) |
 | Reactive | Kotlin Coroutines + Flow, LiveData |
 | Testing | JUnit 4, Mockito, Robolectric, Turbine, kotlinx-coroutines-test |
-
-## Project Structure
-
-```
-project_01_android/app/src/main/java/com/project01/
-├── viewmodel/
-│   └── GameViewModel.kt          # UI logic, P2P, Bluetooth, video management
-├── session/
-│   ├── GameMessage.kt             # Sealed interface for all network messages
-│   ├── MessageEnvelope.kt         # JSON wire format encoder/decoder
-│   ├── SocketNetworkManager.kt    # TCP socket implementation
-│   ├── NetworkManager.kt          # Network abstraction interface
-│   ├── NetworkEvent.kt            # Typed network events (sealed class)
-│   ├── GameSync.kt                # Facade over NetworkManager
-│   ├── FileTransfer.kt            # Binary file transfer
-│   ├── PlaybackCommand.kt         # Play/pause/next/previous commands
-│   ├── PlaybackState.kt           # Video position synchronization
-│   ├── AdvancedCommand.kt         # Screen and torch control
-│   ├── PasswordMessage.kt         # Game join authentication
-│   ├── PasswordResponseMessage.kt # Authentication response
-│   ├── FileTransferRequest.kt     # File transfer initiation
-│   └── Video.kt                   # Video data model
-├── p2p/
-│   ├── ConnectionService.kt       # Background service for Wi-Fi Direct
-│   └── WifiDirectBroadcastReceiver.kt
-├── bluetooth/
-│   └── BluetoothRemoteControl.kt  # Bluetooth remote control support
-├── GameRepository.kt              # Android system services, dependency construction
-├── MainActivity.kt                # Single activity (View layer)
-├── Player.kt                      # Player data model
-├── PlayerAdapter.kt               # RecyclerView adapter for player list
-└── VideoAdapter.kt                # RecyclerView adapter for video playlist
-```
 
 ## Creating a Release
 
@@ -145,8 +114,9 @@ The script:
 1. Validates the version format (`vX.Y.Z`)
 2. Checks for uncommitted changes
 3. Builds the debug APK locally as a sanity check
-4. Creates an annotated git tag
-5. Pushes the tag to origin, which triggers GitHub Actions
+4. Auto-generates release notes from commit messages since the last tag
+5. Creates an annotated git tag with the release notes
+6. Pushes the tag to origin, which triggers GitHub Actions
 
 ### Manual steps (equivalent)
 

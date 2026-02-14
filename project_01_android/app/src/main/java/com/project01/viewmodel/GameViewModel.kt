@@ -4,10 +4,13 @@ import android.annotation.SuppressLint
 import android.app.Application
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothManager
 import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.net.Uri
+import android.os.Build
 import android.net.wifi.p2p.WifiP2pConfig
 import android.net.wifi.p2p.WifiP2pDevice
 import android.net.wifi.p2p.WifiP2pManager
@@ -70,8 +73,12 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         override fun onReceive(context: android.content.Context, intent: Intent) {
             when (intent.action) {
                 BluetoothDevice.ACTION_FOUND -> {
-                    val device: BluetoothDevice? =
+                    val device: BluetoothDevice? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+                    } else {
+                        @Suppress("DEPRECATION")
                         intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+                    }
                     device?.let {
                         val currentDevices = _bluetoothDevices.value?.toMutableList() ?: mutableListOf()
                         if (!currentDevices.contains(it)) {
@@ -131,7 +138,8 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     }
 
     private fun initializeBluetooth() {
-        bluetoothAdapter = BluetoothAdapter.getDefaultAdapter()
+        val bluetoothManager = getApplication<Application>().getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+        bluetoothAdapter = bluetoothManager?.adapter
         if (bluetoothAdapter == null) {
             // Device doesn't support Bluetooth
         } else {

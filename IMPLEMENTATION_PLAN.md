@@ -617,7 +617,7 @@ The current `versionCode 1` / `versionName "1.0"` has no role in the network pro
 
 ---
 
-## Priority 17 — Accessibility
+## Priority 17 — Accessibility ✅ DONE
 
 ### 17.1 Add content descriptions to all interactive elements
 

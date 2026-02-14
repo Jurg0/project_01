@@ -375,6 +375,7 @@ class MainActivity : AppCompatActivity() {
         binding.playbackControls.visibility = View.VISIBLE
         binding.listsContainer.visibility = View.VISIBLE
         binding.invisibleResumeButton.visibility = View.GONE
+        binding.createGameButton.announceForAccessibility("Returned to lobby.")
     }
 
     private fun showGame() {
@@ -393,6 +394,7 @@ class MainActivity : AppCompatActivity() {
         binding.playbackControls.visibility = View.GONE
         binding.listsContainer.visibility = View.GONE
         binding.invisibleResumeButton.visibility = if (isGameMaster) View.VISIBLE else View.GONE
+        binding.playerView.announceForAccessibility("Game started. Video player is active.")
     }
 
     private fun updateUi(isGameStarted: Boolean) {

@@ -4,13 +4,14 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@android:color/holo_blue_dark"
+    android:background="@color/app_background"
     tools:context=".MainActivity">
 
     <androidx.media3.ui.PlayerView
         android:id="@+id/player_view"
         android:layout_width="0dp"
         android:layout_height="0dp"
+        android:contentDescription="Video player"
         app:layout_constraintBottom_toTopOf="@+id/guideline"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
@@ -38,6 +39,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:contentDescription="Play previous video"
             android:text="Previous" />
 
         <Button
@@ -45,6 +47,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:contentDescription="Toggle play and pause"
             android:text="Play/Pause" />
 
         <Button
@@ -52,6 +55,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:contentDescription="Play next video"
             android:text="Next" />
     </LinearLayout>
 
@@ -85,6 +89,7 @@
         android:id="@+id/add_video_button"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
+        android:contentDescription="Add a video to the playlist"
         android:text="Add Video"
         app:layout_constraintBottom_toTopOf="@+id/turn_off_screen_button"
         app:layout_constraintEnd_toEndOf="parent"
@@ -94,6 +99,7 @@
         android:id="@+id/turn_off_screen_button"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
+        android:contentDescription="Turn off player screens"
         android:text="Turn Off Screen"
         app:layout_constraintBottom_toTopOf="@+id/deactivate_torch_button"
         app:layout_constraintEnd_toEndOf="parent"
@@ -103,6 +109,7 @@
         android:id="@+id/deactivate_torch_button"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
+        android:contentDescription="Turn off player flashlights"
         android:text="Deactivate Torch"
         app:layout_constraintBottom_toTopOf="@+id/create_game_button"
         app:layout_constraintEnd_toEndOf="parent"
@@ -112,6 +119,7 @@
         android:id="@+id/create_game_button"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
+        android:contentDescription="Create a new game session"
         android:text="Create Game"
         app:layout_constraintBottom_toTopOf="@+id/join_game_button"
         app:layout_constraintEnd_toEndOf="parent"
@@ -121,6 +129,7 @@
         android:id="@+id/join_game_button"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
+        android:contentDescription="Join an existing game session"
         android:text="Join Game"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
@@ -131,6 +140,7 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:background="@android:color/black"
+        android:importantForAccessibility="no"
         android:visibility="gone"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
@@ -142,6 +152,7 @@
         android:layout_width="0dp"
         android:layout_height="0dp"
         android:background="@android:color/transparent"
+        android:contentDescription="Resume game controls"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
@@ -151,6 +162,8 @@
         android:id="@+id/connectivity_indicator"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
+        android:accessibilityLiveRegion="polite"
+        android:contentDescription="Connection status"
         android:paddingHorizontal="12dp"
         android:paddingVertical="4dp"
         android:textColor="@android:color/white"

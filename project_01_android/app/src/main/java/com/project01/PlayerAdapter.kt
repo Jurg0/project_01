@@ -27,6 +27,7 @@ class PlayerAdapter(private val clickListener: (Player) -> Unit) :
 
         fun bind(player: Player, clickListener: (Player) -> Unit) {
             playerName.text = player.name
+            playerName.contentDescription = player.name
             if (player.isGameMaster) {
                 gameMasterLabel.visibility = View.VISIBLE
             } else {

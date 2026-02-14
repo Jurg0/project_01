@@ -31,18 +31,27 @@
             android:id="@+id/move_up_button"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:minWidth="48dp"
+            android:minHeight="48dp"
+            android:contentDescription="Move video up in playlist"
             android:text="Up" />
 
         <Button
             android:id="@+id/move_down_button"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:minWidth="48dp"
+            android:minHeight="48dp"
+            android:contentDescription="Move video down in playlist"
             android:text="Down" />
 
         <Button
             android:id="@+id/remove_button"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:minWidth="48dp"
+            android:minHeight="48dp"
+            android:contentDescription="Remove video from playlist"
             android:text="Remove" />
 
     </LinearLayout>
@@ -52,6 +61,7 @@
         style="?android:attr/progressBarStyleHorizontal"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:contentDescription="File transfer progress"
         android:visibility="gone" />
 
 </LinearLayout>

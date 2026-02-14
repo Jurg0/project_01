@@ -107,6 +107,14 @@ class SerializationTest {
         val deserialized = roundTrip(original) as PasswordChallenge
         assertEquals(original, deserialized)
         assertEquals(nonce, deserialized.nonce)
+        assertEquals(MessageEnvelope.PROTOCOL_VERSION, deserialized.protocolVersion)
+    }
+
+    @Test
+    fun `PasswordChallenge with explicit protocol version round-trip`() {
+        val original = PasswordChallenge(nonce = "testnonce", protocolVersion = 42)
+        val deserialized = roundTrip(original) as PasswordChallenge
+        assertEquals(42, deserialized.protocolVersion)
     }
 
     @Test

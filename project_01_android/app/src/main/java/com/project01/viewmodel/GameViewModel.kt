@@ -209,6 +209,12 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     }
 
     private fun handlePasswordChallenge(challenge: PasswordChallenge) {
+        if (challenge.protocolVersion != MessageEnvelope.PROTOCOL_VERSION) {
+            _uiError.postValue(UiError.Critical(
+                "Incompatible app version (server: v${challenge.protocolVersion}, local: v${MessageEnvelope.PROTOCOL_VERSION}). Update all devices to the same version."
+            ))
+            return
+        }
         pendingNonce = challenge.nonce
         pendingPassword?.let { password ->
             val hash = PasswordHasher.hash(password, challenge.nonce)

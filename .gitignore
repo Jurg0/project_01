@@ -30,6 +30,10 @@ app/build/
 # macOS specific files
 .DS_Store
 
+# Signing keys
+*.jks
+*.keystore
+
 # Temporary files
 *.tmp
 *~

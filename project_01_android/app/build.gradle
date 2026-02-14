@@ -42,9 +42,25 @@ android {
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        release {
+            def props = new Properties()
+            def propsFile = rootProject.file('local.properties')
+            if (propsFile.exists()) {
+                props.load(new FileInputStream(propsFile))
+            }
+            storeFile file(props.getProperty('RELEASE_STORE_FILE', System.getenv('RELEASE_STORE_FILE') ?: 'release-keystore.jks'))
+            storePassword props.getProperty('RELEASE_STORE_PASSWORD', System.getenv('RELEASE_STORE_PASSWORD') ?: '')
+            keyAlias props.getProperty('RELEASE_KEY_ALIAS', System.getenv('RELEASE_KEY_ALIAS') ?: 'project01')
+            keyPassword props.getProperty('RELEASE_KEY_PASSWORD', System.getenv('RELEASE_KEY_PASSWORD') ?: '')
+        }
+    }
+
     buildTypes {
         release {
-            minifyEnabled false
+            signingConfig signingConfigs.release
+            minifyEnabled true
+            shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }

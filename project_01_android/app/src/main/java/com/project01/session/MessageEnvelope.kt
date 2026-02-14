@@ -19,6 +19,8 @@ data class VideoDto(val uriString: String, val title: String)
 data class HeartbeatMsg(val timestamp: Long = System.currentTimeMillis()) : GameMessage
 
 object MessageEnvelope {
+    const val PROTOCOL_VERSION = 1
+
     val json = Json {
         classDiscriminator = "msg_type"
         ignoreUnknownKeys = true

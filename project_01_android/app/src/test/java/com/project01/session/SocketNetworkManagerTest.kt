@@ -131,6 +131,7 @@ class SocketNetworkManagerTest {
         assertTrue("Expected PasswordChallenge, got ${message::class.simpleName}", message is PasswordChallenge)
         val challenge = message as PasswordChallenge
         assertEquals(64, challenge.nonce.length)
+        assertEquals(MessageEnvelope.PROTOCOL_VERSION, challenge.protocolVersion)
 
         client.close()
     }

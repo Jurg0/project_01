@@ -14,6 +14,7 @@ import com.project01.session.AdvancedCommand
 import com.project01.session.AdvancedCommandType
 import com.project01.session.NetworkEvent
 import com.project01.session.GameSync
+import com.project01.session.MessageEnvelope
 import com.project01.session.PasswordChallenge
 import com.project01.session.PasswordHasher
 import com.project01.session.PasswordMessage
@@ -475,5 +476,37 @@ class GameViewModelTest {
         gameSyncEventLiveData.value = NetworkEvent.ClientDisconnected("192.168.1.5")
 
         assertNull(state)
+    }
+
+    // --- Protocol version tests ---
+
+    @Test
+    fun `protocol version mismatch emits Critical UiError and does not send password`() = runTest {
+        gameViewModel.joinGame("mypassword")
+
+        var emitted: UiError? = null
+        gameViewModel.uiError.observeForever { emitted = it }
+
+        gameSyncEventLiveData.value = NetworkEvent.DataReceived(
+            PasswordChallenge(nonce = "abc123", protocolVersion = 999), "192.168.1.1"
+        )
+
+        assertTrue(emitted is UiError.Critical)
+        assertTrue(emitted!!.message.contains("Incompatible app version"))
+        verify(mockGameSync, never()).broadcast(any())
+    }
+
+    @Test
+    fun `matching protocol version proceeds with authentication`() = runTest {
+        val nonce = "abc123"
+
+        gameSyncEventLiveData.value = NetworkEvent.DataReceived(
+            PasswordChallenge(nonce = nonce, protocolVersion = MessageEnvelope.PROTOCOL_VERSION), "192.168.1.1"
+        )
+
+        gameViewModel.joinGame("mypassword")
+
+        val expectedHash = PasswordHasher.hash("mypassword", nonce)
+        verify(mockGameSync).broadcast(PasswordMessage(passwordHash = expectedHash))
     }
 }

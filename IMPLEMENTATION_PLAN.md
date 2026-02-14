@@ -540,7 +540,7 @@ Priorities 12, 13, 14 are independent of each other.
 
 ---
 
-## Priority 16 — Signing & Release Build
+## Priority 16 — Signing & Release Build ✅ DONE
 
 ### 16.1 Create release signing configuration
 

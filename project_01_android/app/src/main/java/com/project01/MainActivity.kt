@@ -21,6 +21,7 @@ import com.project01.databinding.ActivityMainBinding
 import com.project01.p2p.ConnectionService
 import com.project01.session.CreateGameDialogFragment
 import com.project01.session.JoinGameDialogFragment
+import com.project01.session.SnapshotManager
 import com.project01.session.Video
 import com.project01.viewmodel.GameViewModel
 
@@ -91,6 +92,7 @@ class MainActivity : AppCompatActivity() {
         setupRecyclerViews()
         setupClickListeners()
         observeViewModel()
+        checkForResumeSnapshot()
     }
 
     private fun setupRecyclerViews() {
@@ -236,6 +238,32 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         })
+    }
+
+    private fun checkForResumeSnapshot() {
+        val snapshot = gameViewModel.loadSnapshot()
+        if (snapshot != null) {
+            val age = System.currentTimeMillis() - snapshot.timestamp
+            if (age < SnapshotManager.MAX_SNAPSHOT_AGE_MS) {
+                val timeAgo = android.text.format.DateUtils.getRelativeTimeSpanString(
+                    snapshot.timestamp,
+                    System.currentTimeMillis(),
+                    android.text.format.DateUtils.MINUTE_IN_MILLIS
+                )
+                androidx.appcompat.app.AlertDialog.Builder(this)
+                    .setTitle("Resume Game?")
+                    .setMessage("A game session from $timeAgo was found. Resume?")
+                    .setPositiveButton("Resume") { _, _ ->
+                        gameViewModel.restoreFromSnapshot(snapshot)
+                    }
+                    .setNegativeButton("Discard") { _, _ ->
+                        gameViewModel.clearSnapshot()
+                    }
+                    .show()
+            } else {
+                gameViewModel.clearSnapshot()
+            }
+        }
     }
 
     private fun handleAdvancedCommand(command: com.project01.session.AdvancedCommand) {

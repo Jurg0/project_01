@@ -51,6 +51,9 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     private var bluetoothAdapter: BluetoothAdapter? = null
     private var bluetoothRemoteControl: BluetoothRemoteControl? = null
     private var isBluetoothReceiverRegistered = false
+    private var currentVideoIndex = 0
+    private var currentPlaybackPosition = 0L
+    private var currentIsPlaying = false
 
     private val connectionInfoObserver = Observer<android.net.wifi.p2p.WifiP2pInfo> { info ->
         handleConnectionInfo(info)
@@ -115,6 +118,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
                 repository.gameSync.connectTo(lastHost!!, lastPort!!)
                 _connectivityStatus.postValue("Connected")
             }
+            startPeriodicSnapshots()
         }
     }
 
@@ -159,6 +163,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
                     is PasswordChallenge -> handlePasswordChallenge(data)
                     is PasswordMessage -> handlePasswordMessage(data, address)
                     is PasswordResponseMessage -> handlePasswordResponseMessage(data)
+                    is GameStateSnapshot -> repository.snapshotManager.saveSnapshot(data)
                     is HeartbeatMsg -> { /* filtered by SocketNetworkManager */ }
                 }
             }
@@ -395,6 +400,9 @@ class GameViewModel(application: Application, val repository: GameRepository = G
 
 
     fun broadcastPlaybackState(position: Long, isPlaying: Boolean, videoIndex: Int) {
+        currentVideoIndex = videoIndex
+        currentPlaybackPosition = position
+        currentIsPlaying = isPlaying
         if (isGameMaster()) {
             viewModelScope.launch {
                 repository.gameSync.broadcast(PlaybackState(videoIndex, position, isPlaying))
@@ -403,6 +411,9 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     }
 
     private fun applyPlaybackState(state: PlaybackState) {
+        currentVideoIndex = state.videoIndex
+        currentPlaybackPosition = state.playbackPosition
+        currentIsPlaying = state.playWhenReady
         if (state.playWhenReady) {
             _showVideo.postValue(Unit)
         }
@@ -429,6 +440,49 @@ class GameViewModel(application: Application, val repository: GameRepository = G
 
 
 
+    private fun startPeriodicSnapshots() {
+        repository.snapshotManager.startPeriodicSnapshots(scope = viewModelScope) {
+            val snapshot = buildSnapshot()
+            if (snapshot != null && isGameMaster()) {
+                repository.gameSync.broadcast(snapshot)
+            }
+            snapshot
+        }
+    }
+
+    fun buildSnapshot(): GameStateSnapshot? {
+        val videoList = videos.value?.map { it.toDto() } ?: return null
+        return GameStateSnapshot(
+            videoList = videoList,
+            currentVideoIndex = currentVideoIndex,
+            playbackPosition = currentPlaybackPosition,
+            isPlaying = currentIsPlaying,
+            playerAddresses = players.value?.map { it.device.deviceAddress } ?: emptyList(),
+            gameMasterAddress = if (isGameMaster()) thisDevice.value?.deviceAddress ?: "" else "",
+            timestamp = System.currentTimeMillis()
+        )
+    }
+
+    fun loadSnapshot(): GameStateSnapshot? = repository.snapshotManager.loadSnapshot()
+
+    fun clearSnapshot() = repository.snapshotManager.clearSnapshot()
+
+    fun restoreFromSnapshot(snapshot: GameStateSnapshot) {
+        val restoredVideos = snapshot.videoList.map { it.toVideo() }
+        repository.restoreVideos(restoredVideos)
+        currentVideoIndex = snapshot.currentVideoIndex
+        currentPlaybackPosition = snapshot.playbackPosition
+        currentIsPlaying = snapshot.isPlaying
+        _playbackCommand.postValue(
+            PlaybackCommand(
+                PlaybackCommandType.PLAY_PAUSE,
+                snapshot.currentVideoIndex,
+                snapshot.playbackPosition,
+                snapshot.isPlaying
+            )
+        )
+    }
+
     fun onPause() {
         if (isBluetoothReceiverRegistered) {
             getApplication<Application>().unregisterReceiver(bluetoothReceiver)
@@ -438,6 +492,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
 
     override fun onCleared() {
         super.onCleared()
+        repository.snapshotManager.stopPeriodicSnapshots()
         repository.connectionInfo.removeObserver(connectionInfoObserver)
         repository.gameSyncEvent.removeObserver(gameSyncEventObserver)
         repository.shutdown()

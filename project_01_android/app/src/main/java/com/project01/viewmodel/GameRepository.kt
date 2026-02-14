@@ -52,6 +52,7 @@ class GameRepository(private val application: Application) {
     }
     val gameSync = GameSync(SocketNetworkManager())
     val fileTransfer = FileTransfer()
+    val snapshotManager = SnapshotManager(java.io.File(application.filesDir, "game_state_snapshot.json"))
     private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     val intentFilter = IntentFilter().apply {
@@ -102,6 +103,10 @@ class GameRepository(private val application: Application) {
 
     fun setGameStarted(started: Boolean) {
         _isGameStarted.postValue(started)
+    }
+
+    fun restoreVideos(videos: List<Video>) {
+        _videos.postValue(videos)
     }
 
     fun showToast(message: String) {

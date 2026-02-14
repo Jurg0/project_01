@@ -23,6 +23,7 @@ import com.project01.session.PlaybackCommand
 import com.project01.session.PlaybackCommandType
 import com.project01.session.PlaybackState
 import com.project01.session.ReconnectionManager
+import com.project01.session.SnapshotManager
 import com.project01.session.Video
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -65,6 +66,8 @@ class GameViewModelTest {
     @Mock
     private lateinit var mockReconnectionManager: ReconnectionManager
     @Mock
+    private lateinit var mockSnapshotManager: SnapshotManager
+    @Mock
     private lateinit var mockWifiP2pManager: WifiP2pManager
     @Mock
     private lateinit var mockWifiP2pChannel: WifiP2pManager.Channel
@@ -87,6 +90,7 @@ class GameViewModelTest {
         videosLiveData = MutableLiveData<List<Video>>()
 
         `when`(mockGameRepository.gameSync).thenReturn(mockGameSync)
+        `when`(mockGameRepository.snapshotManager).thenReturn(mockSnapshotManager)
         `when`(mockGameSync.reconnectionManager).thenReturn(mockReconnectionManager)
         `when`(mockReconnectionManager.state).thenReturn(
             kotlinx.coroutines.flow.MutableStateFlow(ReconnectionManager.ReconnectionState.Idle)

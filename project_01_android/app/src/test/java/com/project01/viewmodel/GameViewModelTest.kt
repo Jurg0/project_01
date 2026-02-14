@@ -25,6 +25,8 @@ import com.project01.session.PlaybackState
 import com.project01.session.ReconnectionManager
 import com.project01.session.SnapshotManager
 import com.project01.session.Video
+import com.project01.ui.ConnectionStatus
+import com.project01.ui.UiError
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -209,26 +211,38 @@ class GameViewModelTest {
     // --- Network event handling tests ---
 
     @Test
-    fun `handleGameSyncEvent Error shows toast`() {
+    fun `handleGameSyncEvent Error emits Recoverable UiError`() {
         val errorMessage = "Connection lost"
+        var emitted: UiError? = null
+        gameViewModel.uiError.observeForever { emitted = it }
+
         gameSyncEventLiveData.value = NetworkEvent.Error(Exception(errorMessage))
 
-        verify(mockGameRepository).showToast(errorMessage)
+        assertTrue(emitted is UiError.Recoverable)
+        assertEquals(errorMessage, emitted!!.message)
     }
 
     @Test
-    fun `handleGameSyncEvent Error with null message shows Unknown error`() {
+    fun `handleGameSyncEvent Error with null message emits Unknown error UiError`() {
+        var emitted: UiError? = null
+        gameViewModel.uiError.observeForever { emitted = it }
+
         gameSyncEventLiveData.value = NetworkEvent.Error(Exception())
 
-        verify(mockGameRepository).showToast("Unknown error")
+        assertTrue(emitted is UiError.Recoverable)
+        assertEquals("Unknown error", emitted!!.message)
     }
 
     @Test
-    fun `handleGameSyncEvent ClientDisconnected shows toast for game master`() {
+    fun `handleGameSyncEvent ClientDisconnected emits Informational UiError for game master`() {
         makeGameMaster("password")
+        var emitted: UiError? = null
+        gameViewModel.uiError.observeForever { emitted = it }
+
         gameSyncEventLiveData.value = NetworkEvent.ClientDisconnected("192.168.1.5")
 
-        verify(mockGameRepository).showToast("Client disconnected: 192.168.1.5")
+        assertTrue(emitted is UiError.Informational)
+        assertEquals("Client disconnected: 192.168.1.5", emitted!!.message)
     }
 
     @Test
@@ -257,14 +271,14 @@ class GameViewModelTest {
     }
 
     @Test
-    fun `handleGameSyncEvent ClientConnected updates connectivity status and stops reconnection`() {
-        var status: String? = null
-        gameViewModel.connectivityStatus.observeForever { status = it }
+    fun `handleGameSyncEvent ClientConnected sets CONNECTED state and stops reconnection`() {
+        var state: ConnectionStatus? = null
+        gameViewModel.connectionState.observeForever { state = it }
 
         gameSyncEventLiveData.value = NetworkEvent.ClientConnected("192.168.1.1")
 
         verify(mockReconnectionManager).stopReconnecting()
-        assertEquals("Connected", status)
+        assertEquals(ConnectionStatus.CONNECTED, state)
     }
 
     @Test
@@ -438,5 +452,28 @@ class GameViewModelTest {
         )
 
         assertEquals(true, verified)
+    }
+
+    // --- ConnectionStatus tests ---
+
+    @Test
+    fun `ClientDisconnected without host info sets DISCONNECTED state`() {
+        var state: ConnectionStatus? = null
+        gameViewModel.connectionState.observeForever { state = it }
+
+        gameSyncEventLiveData.value = NetworkEvent.ClientDisconnected("192.168.1.1")
+
+        assertEquals(ConnectionStatus.DISCONNECTED, state)
+    }
+
+    @Test
+    fun `ClientDisconnected as game master does not change connection state`() {
+        makeGameMaster("password")
+        var state: ConnectionStatus? = null
+        gameViewModel.connectionState.observeForever { state = it }
+
+        gameSyncEventLiveData.value = NetworkEvent.ClientDisconnected("192.168.1.5")
+
+        assertNull(state)
     }
 }

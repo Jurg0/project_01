@@ -3,6 +3,7 @@ package com.project01
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.view.View
@@ -17,12 +18,15 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.recyclerview.widget.LinearLayoutManager
+import com.google.android.material.snackbar.Snackbar
 import com.project01.databinding.ActivityMainBinding
 import com.project01.p2p.ConnectionService
 import com.project01.session.CreateGameDialogFragment
 import com.project01.session.JoinGameDialogFragment
 import com.project01.session.SnapshotManager
 import com.project01.session.Video
+import com.project01.ui.ConnectionStatus
+import com.project01.ui.UiError
 import com.project01.viewmodel.GameViewModel
 
 class MainActivity : AppCompatActivity() {
@@ -202,8 +206,12 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
-        gameViewModel.connectivityStatus.observe(this, Observer { status ->
-            binding.connectivityIndicator.text = status
+        gameViewModel.connectionState.observe(this, Observer { state ->
+            updateConnectivityIndicator(state)
+        })
+
+        gameViewModel.uiError.observe(this, Observer { error ->
+            handleUiError(error)
         })
 
         gameViewModel.showVideo.observe(this, Observer {
@@ -228,16 +236,62 @@ class MainActivity : AppCompatActivity() {
                     Toast.makeText(this, "Transfer complete: ${event.fileName}", Toast.LENGTH_SHORT).show()
                 }
                 is com.project01.session.FileTransferEvent.Failure -> {
-                    Toast.makeText(this, "Transfer failed: ${event.fileName}", Toast.LENGTH_SHORT).show()
+                    videoAdapter.markFailed(event.fileName)
+                    Snackbar.make(binding.root, "Transfer failed: ${event.fileName}", Snackbar.LENGTH_LONG).show()
                 }
                 is com.project01.session.FileTransferEvent.RetryAttempt -> {
                     Toast.makeText(this, "Retrying transfer (${event.attempt}/${event.maxRetries}): ${event.fileName}", Toast.LENGTH_SHORT).show()
                 }
                 is com.project01.session.FileTransferEvent.ChecksumFailed -> {
-                    Toast.makeText(this, "File corrupted during transfer: ${event.fileName}", Toast.LENGTH_LONG).show()
+                    videoAdapter.markFailed(event.fileName)
+                    Snackbar.make(binding.root, "File corrupted during transfer: ${event.fileName}", Snackbar.LENGTH_LONG).show()
                 }
             }
         })
+    }
+
+    private fun updateConnectivityIndicator(state: ConnectionStatus) {
+        val (text, color) = when (state) {
+            ConnectionStatus.CONNECTED -> "Connected" to Color.parseColor("#4CAF50")
+            ConnectionStatus.HOST -> "Host" to Color.parseColor("#4CAF50")
+            ConnectionStatus.RECONNECTING -> "Reconnecting..." to Color.parseColor("#FF9800")
+            ConnectionStatus.CONNECTING -> "Connecting..." to Color.parseColor("#FF9800")
+            ConnectionStatus.DISCONNECTED -> "Disconnected" to Color.parseColor("#F44336")
+        }
+        binding.connectivityIndicator.text = text
+        binding.connectivityIndicator.setTextColor(color)
+    }
+
+    private fun handleUiError(error: UiError) {
+        when (error) {
+            is UiError.Informational -> {
+                Snackbar.make(binding.root, error.message, Snackbar.LENGTH_SHORT).show()
+            }
+            is UiError.Recoverable -> {
+                val snackbar = Snackbar.make(binding.root, error.message, Snackbar.LENGTH_LONG)
+                if (error.actionLabel != null && error.action != null) {
+                    snackbar.setAction(error.actionLabel) { error.action.invoke() }
+                }
+                snackbar.show()
+            }
+            is UiError.Critical -> {
+                binding.errorBannerMessage.text = error.message
+                if (error.actionLabel != null && error.action != null) {
+                    binding.errorBannerAction.text = error.actionLabel
+                    binding.errorBannerAction.visibility = View.VISIBLE
+                    binding.errorBannerAction.setOnClickListener {
+                        error.action.invoke()
+                        binding.errorBanner.visibility = View.GONE
+                    }
+                } else {
+                    binding.errorBannerAction.visibility = View.GONE
+                }
+                binding.errorBannerDismiss.setOnClickListener {
+                    binding.errorBanner.visibility = View.GONE
+                }
+                binding.errorBanner.visibility = View.VISIBLE
+            }
+        }
     }
 
     private fun checkForResumeSnapshot() {
@@ -309,6 +363,7 @@ class MainActivity : AppCompatActivity() {
         videoAdapter.isGameMaster = isGameMaster
         videoAdapter.notifyDataSetChanged() // Needed to refresh game master button visibility
 
+        binding.errorBanner.visibility = View.GONE
         binding.playerView.visibility = View.GONE
         binding.playerList.visibility = View.VISIBLE
         binding.videoPlaylist.visibility = View.VISIBLE

@@ -17,6 +17,8 @@ import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.Observer
 import androidx.lifecycle.viewModelScope
 import com.project01.session.*
+import com.project01.ui.ConnectionStatus
+import com.project01.ui.UiError
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import java.io.File
@@ -29,8 +31,10 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     val thisDevice: LiveData<WifiP2pDevice> = repository.thisDevice
     val toastMessage: LiveData<String> = repository.toastMessage
     val fileTransferEvent: LiveData<FileTransferEvent> = repository.fileTransferEvent
-    private val _connectivityStatus = MutableLiveData<String>()
-    val connectivityStatus: LiveData<String> = _connectivityStatus
+    private val _connectionState = MutableLiveData<ConnectionStatus>()
+    val connectionState: LiveData<ConnectionStatus> = _connectionState
+    private val _uiError = MutableLiveData<UiError>()
+    val uiError: LiveData<UiError> = _uiError
 
     private val _showVideo = MutableLiveData<Unit>()
     val showVideo: LiveData<Unit> = _showVideo
@@ -95,9 +99,13 @@ class GameViewModel(application: Application, val repository: GameRepository = G
             repository.gameSync.reconnectionManager.state.collectLatest { state ->
                 when (state) {
                     is ReconnectionManager.ReconnectionState.Reconnecting ->
-                        _connectivityStatus.postValue("Reconnecting (attempt ${state.attempt})...")
-                    is ReconnectionManager.ReconnectionState.Failed ->
-                        _connectivityStatus.postValue("Disconnected")
+                        _connectionState.postValue(ConnectionStatus.RECONNECTING)
+                    is ReconnectionManager.ReconnectionState.Failed -> {
+                        _connectionState.postValue(ConnectionStatus.DISCONNECTED)
+                        _uiError.postValue(UiError.Critical("Connection lost", "Retry") {
+                            retryConnection()
+                        })
+                    }
                     else -> {}
                 }
             }
@@ -110,13 +118,13 @@ class GameViewModel(application: Application, val repository: GameRepository = G
             if (info.isGroupOwner) {
                 player = thisDevice.value?.let { Player(it, it.deviceName, true) }
                 repository.gameSync.startServer()
-                _connectivityStatus.postValue("Host")
+                _connectionState.postValue(ConnectionStatus.HOST)
             } else {
                 player = thisDevice.value?.let { Player(it, it.deviceName, false) }
                 lastHost = info.groupOwnerAddress.hostAddress
                 lastPort = repository.gameSync.port
                 repository.gameSync.connectTo(lastHost!!, lastPort!!)
-                _connectivityStatus.postValue("Connected")
+                _connectionState.postValue(ConnectionStatus.CONNECTED)
             }
             startPeriodicSnapshots()
         }
@@ -168,12 +176,12 @@ class GameViewModel(application: Application, val repository: GameRepository = G
                 }
             }
             is NetworkEvent.Error -> {
-                repository.showToast(event.exception.message ?: "Unknown error")
+                _uiError.postValue(UiError.Recoverable(event.exception.message ?: "Unknown error"))
             }
             is NetworkEvent.ClientConnected -> {
                 if (!isGameMaster()) {
                     repository.gameSync.reconnectionManager.stopReconnecting()
-                    _connectivityStatus.postValue("Connected")
+                    _connectionState.postValue(ConnectionStatus.CONNECTED)
                 }
             }
             is NetworkEvent.ClientDisconnected -> {
@@ -183,10 +191,10 @@ class GameViewModel(application: Application, val repository: GameRepository = G
                     if (host != null && port != null) {
                         repository.gameSync.reconnectionManager.startReconnecting(host, port)
                     } else {
-                        _connectivityStatus.postValue("Disconnected")
+                        _connectionState.postValue(ConnectionStatus.DISCONNECTED)
                     }
                 } else {
-                    repository.showToast("Client disconnected: ${event.address}")
+                    _uiError.postValue(UiError.Informational("Client disconnected: ${event.address}"))
                 }
             }
         }
@@ -481,6 +489,14 @@ class GameViewModel(application: Application, val repository: GameRepository = G
                 snapshot.isPlaying
             )
         )
+    }
+
+    fun retryConnection() {
+        val host = lastHost
+        val port = lastPort
+        if (host != null && port != null) {
+            repository.gameSync.reconnectionManager.startReconnecting(host, port)
+        }
     }
 
     fun onPause() {

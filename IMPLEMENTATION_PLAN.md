@@ -459,7 +459,7 @@ Tests: New `PasswordHasherTest.kt` (8 tests), updated `SerializationTest.kt` (+1
 
 ---
 
-## Priority 14 — Game State Snapshots
+## Priority 14 — Game State Snapshots (DONE)
 
 ### 14.1 Periodic game state snapshots for offline resilience
 

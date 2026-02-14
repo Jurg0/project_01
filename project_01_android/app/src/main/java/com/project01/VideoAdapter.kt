@@ -4,6 +4,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.ImageView
 import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.recyclerview.widget.DiffUtil
@@ -20,10 +21,12 @@ class VideoAdapter(
 ) : ListAdapter<Video, VideoAdapter.VideoViewHolder>(VideoDiffCallback()) {
 
     private val progressMap = mutableMapOf<String, Int>()
+    private val failedTransfers = mutableSetOf<String>()
 
     override fun onCurrentListChanged(previousList: MutableList<Video>, currentList: MutableList<Video>) {
         val currentTitles = currentList.map { it.title }.toSet()
         progressMap.keys.retainAll(currentTitles)
+        failedTransfers.retainAll(currentTitles)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VideoViewHolder {
@@ -36,10 +39,20 @@ class VideoAdapter(
         holder.bind(video, position, isGameMaster, onMoveUp, onMoveDown, onRemove, onVideoSelected)
         val progress = progressMap[video.title] ?: 0
         holder.updateProgress(progress)
+        holder.updateFailedState(video.title in failedTransfers)
     }
 
     fun updateProgress(videoTitle: String, progress: Int) {
         progressMap[videoTitle] = progress
+        failedTransfers.remove(videoTitle)
+        val index = currentList.indexOfFirst { it.title == videoTitle }
+        if (index != -1) {
+            notifyItemChanged(index)
+        }
+    }
+
+    fun markFailed(videoTitle: String) {
+        failedTransfers.add(videoTitle)
         val index = currentList.indexOfFirst { it.title == videoTitle }
         if (index != -1) {
             notifyItemChanged(index)
@@ -52,6 +65,7 @@ class VideoAdapter(
         private val moveDownButton: Button = itemView.findViewById(R.id.move_down_button)
         private val removeButton: Button = itemView.findViewById(R.id.remove_button)
         private val progressBar: ProgressBar = itemView.findViewById(R.id.progress_bar)
+        private val errorIcon: ImageView = itemView.findViewById(R.id.error_icon)
 
         fun bind(
             video: Video,
@@ -87,6 +101,10 @@ class VideoAdapter(
             } else {
                 progressBar.visibility = View.GONE
             }
+        }
+
+        fun updateFailedState(failed: Boolean) {
+            errorIcon.visibility = if (failed) View.VISIBLE else View.GONE
         }
     }
 

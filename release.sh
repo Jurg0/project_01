@@ -70,8 +70,7 @@ echo "Building debug APK..."
 # echo "Building release APK..."
 # ./project_01_android/gradlew -p ./project_01_android assembleRelease
 
-APK_DIR="project_01_android/app/build/outputs/apk/debug"
-APK="$APK_DIR/app-universal-debug.apk"
+APK="project_01_android/app/build/outputs/apk/debug/app-debug.apk"
 if [ ! -f "$APK" ]; then
     echo "Error: Debug APK not found at $APK"
     exit 1
@@ -79,10 +78,6 @@ fi
 
 APK_SIZE=$(du -h "$APK" | cut -f1)
 echo "Debug APK built successfully ($APK_SIZE): $APK"
-echo "ABI-specific APKs:"
-for f in "$APK_DIR"/app-*-debug.apk; do
-    echo "  $(du -h "$f" | cut -f1)  $(basename "$f")"
-done
 
 echo ""
 echo "Creating tag $VERSION..."

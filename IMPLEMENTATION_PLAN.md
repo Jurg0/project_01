@@ -708,26 +708,9 @@ The password `EditText` in `dialog_create_game.xml` and `dialog_join_game.xml` u
 
 **Files modified:** `app/build.gradle`
 
-### 18.2 ~~Configure ABI splits for release builds~~ DONE
+### 18.2 ~~Configure ABI splits for release builds~~ REVERTED
 
-ExoPlayer includes native decoder libraries bundled for all ABIs (armeabi-v7a, arm64-v8a, x86, x86_64). Most physical Android devices used for a forest game are ARM-based. x86/x86_64 are mainly for emulators.
-
-**Changes:**
-- Add ABI splits configuration to `app/build.gradle`:
-  ```groovy
-  splits {
-      abi {
-          enable true
-          reset()
-          include "arm64-v8a", "armeabi-v7a"
-          universalApk true
-      }
-  }
-  ```
-- `universalApk true` produces one fat APK alongside the split APKs as a fallback
-- For distribution: use the architecture-specific APKs when device architecture is known, or the universal APK when distributing to unknown devices
-
-**Files modified:** `app/build.gradle`
+ExoPlayer's core (`media3-exoplayer`) uses Android's built-in `MediaCodec` for hardware decoding and does not bundle significant per-architecture native libraries. ABI splits produced identically-sized APKs with no size savings, so this was reverted in favor of a single universal APK.
 
 ---
 

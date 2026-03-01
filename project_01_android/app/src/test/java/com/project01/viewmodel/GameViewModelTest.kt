@@ -78,6 +78,7 @@ class GameViewModelTest {
     private lateinit var gameSyncEventLiveData: MutableLiveData<NetworkEvent>
     private lateinit var connectionInfoLiveData: MutableLiveData<WifiP2pInfo>
     private lateinit var videosLiveData: MutableLiveData<List<Video>>
+    private lateinit var thisDeviceLiveData: MutableLiveData<WifiP2pDevice>
 
     private lateinit var gameViewModel: GameViewModel
 
@@ -91,6 +92,7 @@ class GameViewModelTest {
         gameSyncEventLiveData = MutableLiveData<NetworkEvent>()
         connectionInfoLiveData = MutableLiveData<WifiP2pInfo>()
         videosLiveData = MutableLiveData<List<Video>>()
+        thisDeviceLiveData = MutableLiveData<WifiP2pDevice>()
 
         `when`(mockGameRepository.gameSync).thenReturn(mockGameSync)
         `when`(mockGameRepository.snapshotManager).thenReturn(mockSnapshotManager)
@@ -103,9 +105,11 @@ class GameViewModelTest {
         `when`(mockGameRepository.videos).thenReturn(videosLiveData)
         `when`(mockGameRepository.players).thenReturn(MutableLiveData())
         `when`(mockGameRepository.isGameStarted).thenReturn(MutableLiveData())
-        `when`(mockGameRepository.thisDevice).thenReturn(MutableLiveData())
+        `when`(mockGameRepository.thisDevice).thenReturn(thisDeviceLiveData)
         `when`(mockGameRepository.toastMessage).thenReturn(MutableLiveData())
         `when`(mockGameRepository.fileTransferEvent).thenReturn(MutableLiveData())
+        whenever(mockGameRepository.wifiP2pManager).thenReturn(mockWifiP2pManager)
+        whenever(mockGameRepository.channel).thenReturn(mockWifiP2pChannel)
         whenever(mockApplication.getSystemService(Context.WIFI_P2P_SERVICE)).thenReturn(mockWifiP2pManager)
         whenever(mockWifiP2pManager.initialize(any(), any(), any())).thenReturn(mockWifiP2pChannel)
         whenever(mockApplication.mainLooper).thenReturn(mock(Looper::class.java))
@@ -129,11 +133,6 @@ class GameViewModelTest {
     fun `deactivateTorch broadcasts correct AdvancedCommand`() = runTest {
         gameViewModel.deactivateTorch()
         verify(mockGameSync).broadcast(AdvancedCommand(AdvancedCommandType.DEACTIVATE_TORCH))
-    }
-
-    @Test
-    fun `game view model can be instantiated`() {
-        assertNotNull(gameViewModel)
     }
 
     // --- isGameMaster tests ---
@@ -248,14 +247,11 @@ class GameViewModelTest {
 
     @Test
     fun `handleGameSyncEvent ClientDisconnected triggers reconnect for non-game-master`() {
-        // Set lastHost/lastPort via reflection
-        gameViewModel.javaClass.getDeclaredField("lastHost").apply {
-            isAccessible = true
-            set(gameViewModel, "192.168.1.1")
-        }
-        gameViewModel.javaClass.getDeclaredField("lastPort").apply {
-            isAccessible = true
-            set(gameViewModel, 8888)
+        whenever(mockGameSync.port).thenReturn(8888)
+        connectionInfoLiveData.value = WifiP2pInfo().apply {
+            groupFormed = true
+            isGroupOwner = false
+            groupOwnerAddress = java.net.InetAddress.getByName("192.168.1.1")
         }
 
         gameSyncEventLiveData.value = NetworkEvent.ClientDisconnected("192.168.1.1")
@@ -390,13 +386,12 @@ class GameViewModelTest {
     }
 
     private fun makeGameMaster(password: String) {
-        val playerField = gameViewModel.javaClass.getDeclaredField("player")
-        playerField.isAccessible = true
-        playerField.set(gameViewModel, Player(WifiP2pDevice(), "TestDevice", true))
-
-        val passwordField = gameViewModel.javaClass.getDeclaredField("gamePassword")
-        passwordField.isAccessible = true
-        passwordField.set(gameViewModel, password)
+        thisDeviceLiveData.value = WifiP2pDevice().apply { deviceName = "TestDevice" }
+        gameViewModel.createGame(password)
+        connectionInfoLiveData.value = WifiP2pInfo().apply {
+            groupFormed = true
+            isGroupOwner = true
+        }
     }
 
     @Test
@@ -472,10 +467,12 @@ class GameViewModelTest {
         makeGameMaster("password")
         var state: ConnectionStatus? = null
         gameViewModel.connectionState.observeForever { state = it }
+        // makeGameMaster sets connection state to HOST; capture it before the event
+        val stateAfterMakeGameMaster = state
 
         gameSyncEventLiveData.value = NetworkEvent.ClientDisconnected("192.168.1.5")
 
-        assertNull(state)
+        assertEquals(stateAfterMakeGameMaster, state)
     }
 
     // --- Protocol version tests ---

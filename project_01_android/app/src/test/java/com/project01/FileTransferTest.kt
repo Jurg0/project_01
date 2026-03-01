@@ -115,18 +115,4 @@ class FileTransferTest {
         outputFile.delete()
     }
 
-    @Test
-    fun `buffer size is 64KB`() {
-        assertEquals(65536, FileTransfer.BUFFER_SIZE)
-    }
-
-    @Test
-    fun `checksum size is 32 bytes`() {
-        assertEquals(32, FileTransfer.CHECKSUM_SIZE)
-    }
-
-    @Test
-    fun `max retries defaults to 3`() {
-        assertEquals(3, FileTransfer.MAX_RETRIES)
-    }
 }

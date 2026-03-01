@@ -3,10 +3,12 @@ package com.project01.viewmodel
 import android.app.Application
 import android.net.wifi.p2p.WifiP2pDevice
 import android.net.wifi.p2p.WifiP2pDeviceList
+import android.net.wifi.p2p.WifiP2pInfo
 import androidx.arch.core.executor.testing.InstantTaskExecutorRule
 import androidx.test.core.app.ApplicationProvider
 import com.project01.session.Player
 import org.junit.Assert.assertEquals
+import org.junit.After
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -33,6 +35,11 @@ class GameRepositoryTest {
         shadowWifiP2pManager = Shadows.shadowOf(gameRepository.wifiP2pManager)
     }
 
+    @After
+    fun teardown() {
+        gameRepository.shutdown()
+    }
+
     @Test
     fun `peerListListener updates players`() {
         val device1 = WifiP2pDevice().apply { deviceName = "Device 1"; deviceAddress = "00:11:22:33:44:55" }
@@ -46,5 +53,21 @@ class GameRepositoryTest {
 
         val expectedPlayers = listOf(Player(device1, "Device 1", false), Player(device2, "Device 2", false))
         assertEquals(expectedPlayers, gameRepository.players.value)
+    }
+
+    @Test
+    fun `connectionInfoListener updates connectionInfo LiveData`() {
+        val info = WifiP2pInfo()
+        var observed: WifiP2pInfo? = null
+        gameRepository.connectionInfo.observeForever { observed = it }
+
+        gameRepository.connectionInfoListener.onConnectionInfoAvailable(info)
+
+        assertEquals(info, observed)
+    }
+
+    @Test
+    fun `shutdown completes without throwing`() {
+        gameRepository.shutdown()
     }
 }

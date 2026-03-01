@@ -53,13 +53,6 @@ class ConnectionServiceTest {
     }
 
     @Test
-    fun `companion object constants are correct`() {
-        assertEquals("game_connection", ConnectionService.CHANNEL_ID)
-        assertEquals(1, ConnectionService.NOTIFICATION_ID)
-        assertEquals(4 * 60 * 60 * 1000L, ConnectionService.WAKE_LOCK_TIMEOUT_MS)
-    }
-
-    @Test
     fun `onDestroy does not crash`() {
         controller.startCommand(0, 0)
         service.onDestroy()

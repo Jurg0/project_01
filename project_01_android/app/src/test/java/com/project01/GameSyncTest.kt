@@ -31,6 +31,60 @@ class GameSyncTest {
     }
 
     @Test
+    fun `startServer delegates to network manager`() {
+        val testNetworkManager = TestNetworkManager()
+        val gameSync = GameSync(testNetworkManager)
+        var called = false
+        testNetworkManager.onStartServer = { called = true }
+
+        gameSync.startServer()
+
+        assertTrue(called)
+    }
+
+    @Test
+    fun `connectTo delegates to network manager`() {
+        val testNetworkManager = TestNetworkManager()
+        val gameSync = GameSync(testNetworkManager)
+        var capturedHost: String? = null
+        var capturedPort: Int? = null
+        testNetworkManager.onConnectTo = { host, port ->
+            capturedHost = host
+            capturedPort = port
+        }
+
+        gameSync.connectTo("192.168.1.1", 8888)
+
+        assertEquals("192.168.1.1", capturedHost)
+        assertEquals(8888, capturedPort)
+    }
+
+    @Test
+    fun `consumeNonce delegates to network manager`() {
+        val testNetworkManager = TestNetworkManager()
+        val gameSync = GameSync(testNetworkManager)
+        testNetworkManager.onConsumeNonce = { address ->
+            if (address == "192.168.1.1") "abc123" else null
+        }
+
+        val result = gameSync.consumeNonce("192.168.1.1")
+
+        assertEquals("abc123", result)
+    }
+
+    @Test
+    fun `shutdown delegates to network manager`() {
+        val testNetworkManager = TestNetworkManager()
+        val gameSync = GameSync(testNetworkManager)
+        var called = false
+        testNetworkManager.onShutdown = { called = true }
+
+        gameSync.shutdown()
+
+        assertTrue(called)
+    }
+
+    @Test
     fun `events from network manager are exposed`() = runTest {
         val testNetworkManager = TestNetworkManager()
         val gameSync = GameSync(testNetworkManager)

@@ -142,8 +142,12 @@ class GameRepository(private val application: Application) {
         coroutineScope.cancel()
         gameSync.shutdown()
         fileTransfer.shutdown()
-        wifiP2pManager.removeGroup(channel, null)
-        channel.close()
+        try {
+            wifiP2pManager.removeGroup(channel, null)
+            channel.close()
+        } catch (e: Exception) {
+            android.util.Log.w("GameRepository", "Wi-Fi P2P cleanup failed", e)
+        }
     }
 }
 

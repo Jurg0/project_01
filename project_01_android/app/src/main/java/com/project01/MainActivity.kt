@@ -31,7 +31,7 @@ import com.project01.viewmodel.GameViewModel
 
 class MainActivity : AppCompatActivity() {
 
-    private val gameViewModel: GameViewModel by viewModels()
+    private val gameViewModel: GameViewModel by viewModels { GameViewModel.Factory }
     private lateinit var binding: ActivityMainBinding
     private lateinit var playerAdapter: PlayerAdapter
     private lateinit var videoAdapter: VideoAdapter

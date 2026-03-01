@@ -18,7 +18,10 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.Observer
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewmodel.CreationExtras
 import com.project01.session.*
 import com.project01.ui.ConnectionStatus
 import com.project01.ui.UiError
@@ -503,6 +506,16 @@ class GameViewModel(application: Application, val repository: GameRepository = G
                 snapshot.isPlaying
             )
         )
+    }
+
+    companion object {
+        val Factory: ViewModelProvider.Factory = object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T {
+                val application = checkNotNull(extras[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY])
+                return GameViewModel(application) as T
+            }
+        }
     }
 
     fun retryConnection() {

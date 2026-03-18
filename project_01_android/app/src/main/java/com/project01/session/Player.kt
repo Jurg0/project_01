@@ -8,5 +8,8 @@ import kotlinx.parcelize.Parcelize
 data class Player(
     val device: WifiP2pDevice,
     val name: String,
-    val isGameMaster: Boolean
+    val isGameMaster: Boolean,
+    val batteryLevel: Int = -1,
+    val readyVideoCount: Int = 0,
+    val totalVideoCount: Int = 0
 ) : Parcelable

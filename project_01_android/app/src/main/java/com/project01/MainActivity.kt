@@ -6,6 +6,8 @@ import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.view.GestureDetector
+import android.view.MotionEvent
 import android.view.View
 import android.widget.Toast
 import android.hardware.camera2.CameraManager
@@ -36,6 +38,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var playerAdapter: PlayerAdapter
     private lateinit var videoAdapter: VideoAdapter
     private var exoPlayer: ExoPlayer? = null
+    private var isScreenOff = false
+    private var isTorchOn = false
+    private var isGmOverlayVisible = false
 
     private val openDocumentLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let {
@@ -101,7 +106,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupRecyclerViews() {
         playerAdapter = PlayerAdapter { player ->
-            gameViewModel.connectToPlayer(player)
+            requirePermissions(wifiP2pPermissions()) {
+                gameViewModel.connectToPlayer(player)
+            }
         }
         binding.playerList.layoutManager = LinearLayoutManager(this)
         binding.playerList.adapter = playerAdapter
@@ -129,8 +136,8 @@ class MainActivity : AppCompatActivity() {
         binding.joinGameButton.setOnClickListener {
             requirePermissions(wifiP2pPermissions()) {
                 gameViewModel.discoverPeers()
-                JoinGameDialogFragment { password ->
-                    gameViewModel.joinGame(password)
+                JoinGameDialogFragment { name, password ->
+                    gameViewModel.joinGame(name, password)
                 }.show(supportFragmentManager, "JoinGameDialogFragment")
             }
         }
@@ -166,6 +173,62 @@ class MainActivity : AppCompatActivity() {
 
         binding.deactivateTorchButton.setOnClickListener {
             gameViewModel.deactivateTorch()
+        }
+
+        // Double-tap on invisible resume button toggles GM overlay
+        val gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                toggleGmOverlay()
+                return true
+            }
+        })
+        binding.invisibleResumeButton.setOnTouchListener { _, event ->
+            gestureDetector.onTouchEvent(event)
+            true
+        }
+
+        // GM overlay controls
+        binding.gmPlayPauseButton.setOnClickListener {
+            exoPlayer?.playWhenReady = exoPlayer?.playWhenReady == false
+            exoPlayer?.let {
+                gameViewModel.broadcastPlaybackState(it.currentPosition, it.playWhenReady, it.currentMediaItemIndex)
+            }
+        }
+        binding.gmNextButton.setOnClickListener {
+            exoPlayer?.seekToNextMediaItem()
+            exoPlayer?.let {
+                gameViewModel.broadcastPlaybackState(it.currentPosition, it.playWhenReady, it.currentMediaItemIndex)
+            }
+        }
+        binding.gmPreviousButton.setOnClickListener {
+            exoPlayer?.seekToPreviousMediaItem()
+            exoPlayer?.let {
+                gameViewModel.broadcastPlaybackState(it.currentPosition, it.playWhenReady, it.currentMediaItemIndex)
+            }
+        }
+        binding.gmScreenToggleButton.setOnClickListener {
+            if (isScreenOff) {
+                gameViewModel.turnOnScreen()
+            } else {
+                gameViewModel.turnOffScreen()
+            }
+        }
+        binding.gmTorchToggleButton.setOnClickListener {
+            if (isTorchOn) {
+                gameViewModel.deactivateTorch()
+            } else {
+                gameViewModel.activateTorch()
+            }
+        }
+        binding.gmEndGameButton.setOnClickListener {
+            androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("End Game?")
+                .setMessage("This will end the game for all connected players.")
+                .setPositiveButton("End Game") { _, _ ->
+                    gameViewModel.endGame()
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
         }
     }
 
@@ -233,6 +296,7 @@ class MainActivity : AppCompatActivity() {
                     videoAdapter.updateProgress(event.fileName, event.progress)
                 }
                 is com.project01.session.FileTransferEvent.Success -> {
+                    gameViewModel.onFileTransferSuccess(event.fileName)
                     Toast.makeText(this, "Transfer complete: ${event.fileName}", Toast.LENGTH_SHORT).show()
                 }
                 is com.project01.session.FileTransferEvent.Failure -> {
@@ -320,24 +384,47 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun toggleGmOverlay() {
+        isGmOverlayVisible = !isGmOverlayVisible
+        binding.gmOverlay.visibility = if (isGmOverlayVisible) View.VISIBLE else View.GONE
+    }
+
     private fun handleAdvancedCommand(command: com.project01.session.AdvancedCommand) {
         when (command.type) {
             com.project01.session.AdvancedCommandType.TURN_OFF_SCREEN -> {
+                isScreenOff = true
                 binding.blackOverlay.visibility = View.VISIBLE
+                binding.gmScreenToggleButton.text = "Screen On"
+            }
+            com.project01.session.AdvancedCommandType.TURN_ON_SCREEN -> {
+                isScreenOff = false
+                binding.blackOverlay.visibility = View.GONE
+                binding.gmScreenToggleButton.text = "Screen Off"
             }
             com.project01.session.AdvancedCommandType.DEACTIVATE_TORCH -> {
-                val cameraManager = getSystemService(android.content.Context.CAMERA_SERVICE) as CameraManager
-                val cameraId = cameraManager.cameraIdList.firstOrNull()
-                if (cameraId != null) {
-                    try {
-                        cameraManager.setTorchMode(cameraId, false)
-                    } catch (e: Exception) {
-                        Toast.makeText(this, "Failed to deactivate torch: ${e.message}", Toast.LENGTH_SHORT).show()
-                    }
-                } else {
-                    Toast.makeText(this, "No flash available on this device", Toast.LENGTH_SHORT).show()
-                }
+                isTorchOn = false
+                binding.gmTorchToggleButton.text = "Torch On"
+                setTorchMode(false)
             }
+            com.project01.session.AdvancedCommandType.ACTIVATE_TORCH -> {
+                isTorchOn = true
+                binding.gmTorchToggleButton.text = "Torch Off"
+                setTorchMode(true)
+            }
+        }
+    }
+
+    private fun setTorchMode(enabled: Boolean) {
+        val cameraManager = getSystemService(android.content.Context.CAMERA_SERVICE) as CameraManager
+        val cameraId = cameraManager.cameraIdList.firstOrNull()
+        if (cameraId != null) {
+            try {
+                cameraManager.setTorchMode(cameraId, enabled)
+            } catch (e: Exception) {
+                Toast.makeText(this, "Failed to change torch: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            Toast.makeText(this, "No flash available on this device", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -361,20 +448,20 @@ class MainActivity : AppCompatActivity() {
     private fun showLobby() {
         val isGameMaster = gameViewModel.isGameMaster()
         videoAdapter.isGameMaster = isGameMaster
-        videoAdapter.notifyDataSetChanged() // Needed to refresh game master button visibility
+        videoAdapter.notifyDataSetChanged()
 
         binding.errorBanner.visibility = View.GONE
-        binding.playerView.visibility = View.GONE
-        binding.playerList.visibility = View.VISIBLE
-        binding.videoPlaylist.visibility = View.VISIBLE
-        binding.createGameButton.visibility = View.VISIBLE
-        binding.joinGameButton.visibility = View.VISIBLE
-        binding.addVideoButton.visibility = View.VISIBLE
-        binding.turnOffScreenButton.visibility = View.VISIBLE
-        binding.deactivateTorchButton.visibility = View.VISIBLE
+        binding.playerView.visibility = View.VISIBLE
         binding.playbackControls.visibility = View.VISIBLE
         binding.listsContainer.visibility = View.VISIBLE
+        binding.buttonBar.visibility = View.VISIBLE
+        binding.connectivityIndicator.visibility = View.VISIBLE
         binding.invisibleResumeButton.visibility = View.GONE
+        binding.blackOverlay.visibility = View.GONE
+        binding.gmOverlay.visibility = View.GONE
+        isGmOverlayVisible = false
+        isScreenOff = false
+        isTorchOn = false
         binding.createGameButton.announceForAccessibility("Returned to lobby.")
     }
 
@@ -384,15 +471,12 @@ class MainActivity : AppCompatActivity() {
         binding.playerView.visibility = View.VISIBLE
         binding.playerView.useController = false
         binding.playerView.videoSurfaceView?.visibility = View.GONE
-        binding.playerList.visibility = View.GONE
-        binding.videoPlaylist.visibility = View.GONE
-        binding.createGameButton.visibility = View.GONE
-        binding.joinGameButton.visibility = View.GONE
-        binding.addVideoButton.visibility = View.GONE
-        binding.turnOffScreenButton.visibility = View.GONE
-        binding.deactivateTorchButton.visibility = View.GONE
         binding.playbackControls.visibility = View.GONE
         binding.listsContainer.visibility = View.GONE
+        binding.buttonBar.visibility = View.GONE
+        binding.connectivityIndicator.visibility = View.GONE
+        binding.gmOverlay.visibility = View.GONE
+        isGmOverlayVisible = false
         binding.invisibleResumeButton.visibility = if (isGameMaster) View.VISIBLE else View.GONE
         binding.playerView.announceForAccessibility("Game started. Video player is active.")
     }

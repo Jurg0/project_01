@@ -18,8 +18,23 @@ data class VideoDto(val uriString: String, val title: String)
 @SerialName("heartbeat")
 data class HeartbeatMsg(val timestamp: Long = System.currentTimeMillis()) : GameMessage
 
+@Serializable
+@SerialName("end_game")
+data class EndGameMessage(val timestamp: Long = System.currentTimeMillis()) : GameMessage
+
+@Serializable
+@SerialName("player_name")
+data class PlayerNameMessage(val playerName: String) : GameMessage
+
+@Serializable
+@SerialName("player_status")
+data class PlayerStatusMessage(
+    val batteryLevel: Int,
+    val receivedVideos: List<String> = emptyList()
+) : GameMessage
+
 object MessageEnvelope {
-    const val PROTOCOL_VERSION = 1
+    const val PROTOCOL_VERSION = 2
 
     val json = Json {
         classDiscriminator = "msg_type"

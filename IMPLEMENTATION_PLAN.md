@@ -728,6 +728,177 @@ Priorities 16, 17, 18 are independent of each other and of Priorities 9-15 (exce
 
 ---
 
+## Priority 19 — Game Master In-Game Controls ✅ DONE
+
+### 19.1 ~~Game master controls overlay~~ DONE
+
+In game mode, the game master had no way to control playback, torch, screen, or end the game — all controls were hidden by `showGame()`.
+
+**Changes:**
+- Added semi-transparent overlay (`gm_overlay`) anchored to the bottom of the screen with: Previous/Play-Pause/Next, Screen On-Off toggle, Torch On-Off toggle, End Game button
+- Overlay is toggled by double-tapping the `invisible_resume_button` (only visible to game master)
+- Added `GestureDetector` in MainActivity for double-tap detection
+
+### 19.2 ~~End Game~~ DONE
+
+No way to cleanly end a game session. Players entered a reconnection loop when game master killed the app.
+
+**Changes:**
+- Added `EndGameMessage` (`@SerialName("end_game")`) to GameMessage hierarchy
+- `GameViewModel.endGame()`: broadcasts EndGameMessage, stops periodic sync, clears snapshot, resets state
+- Player-side `handleEndGame()`: sets game to stopped, shows `UiError.Informational("Game ended by host")`
+- End Game button shows confirmation AlertDialog before executing
+- Bumped `PROTOCOL_VERSION` to 2
+
+### 19.3 ~~Screen on/off toggle~~ DONE
+
+`TURN_OFF_SCREEN` showed a permanent black overlay with no way to remove it.
+
+**Changes:**
+- Added `TURN_ON_SCREEN` to `AdvancedCommandType` enum
+- `GameViewModel.turnOnScreen()`: broadcasts + applies locally
+- `MainActivity.handleAdvancedCommand()`: handles `TURN_ON_SCREEN` by hiding the black overlay
+- GM overlay button toggles between "Screen Off" and "Screen On" based on state
+
+### 19.4 ~~Torch on/off toggle~~ DONE
+
+Only `DEACTIVATE_TORCH` existed — no way to remotely turn on player flashlights (needed for woods narrative).
+
+**Changes:**
+- Added `ACTIVATE_TORCH` to `AdvancedCommandType` enum
+- `GameViewModel.activateTorch()`: broadcasts + applies locally
+- `MainActivity.handleAdvancedCommand()`: handles `ACTIVATE_TORCH` via `CameraManager.setTorchMode(true)`
+- Extracted `setTorchMode(enabled: Boolean)` helper in MainActivity
+- GM overlay button toggles between "Torch On" and "Torch Off" based on state
+
+**Files modified:** `AdvancedCommand.kt`, `MessageEnvelope.kt`, `GameViewModel.kt`, `MainActivity.kt`, `activity_main.xml`
+
+**Tests:** Updated SerializationTest (+3: TURN_ON_SCREEN, ACTIVATE_TORCH, EndGameMessage round-trips), updated GameViewModelTest (+4: turnOnScreen, activateTorch, endGame, receiving EndGameMessage). Total tests: 114+.
+
+---
+
+## Priority 20 — Game Master Player Management ✅ DONE
+
+### 20.1 ~~Player list population for game master~~ DONE
+
+Game master's player list stayed empty because `discoverPeers()` was only called during the join flow, and TCP-connected clients were not added to the list.
+
+**Changes:**
+- `GameViewModel`: on `NetworkEvent.ClientConnected` (game master side), creates a `Player` from the client address and adds to the player list via `addConnectedPlayer(address)`
+- On `NetworkEvent.ClientDisconnected` (game master side), removes the player via `removeConnectedPlayer(address)`
+- `GameRepository.updatePlayers(players)` added for ViewModel to update the player list
+
+### 20.2 ~~Custom player names~~ DONE
+
+Players appeared as IP addresses on the game master's screen because `WifiP2pDevice.deviceName` was only available through P2P discovery (not TCP connections).
+
+**Changes:**
+- Added name field to `dialog_join_game.xml` (`TextInputLayout` with "Your Name" hint)
+- `JoinGameDialogFragment` now takes `(name: String, password: String) -> Unit` callback
+- `GameViewModel.joinGame(name, password)` stores the name locally
+- After successful password authentication, client broadcasts `PlayerNameMessage(name)` to the server
+- Added `PlayerNameMessage` (`@SerialName("player_name")`) to GameMessage hierarchy
+- `handlePlayerName()` on game master side updates the player's display name in the list
+
+**Files modified:** `JoinGameDialogFragment.kt`, `dialog_join_game.xml`, `GameViewModel.kt`, `MessageEnvelope.kt`, `MainActivity.kt`, `GameRepository.kt`
+
+---
+
+## Priority 21 — Playback & Connectivity ✅ DONE
+
+### 21.1 ~~Periodic playback position sync~~ DONE
+
+Video playback could drift between devices since sync only happened on play/pause events, not during continuous playback.
+
+**Changes:**
+- Game master periodically broadcasts `PlaybackState` every 5 seconds during active playback
+- `applyPlaybackState()` now checks drift: only emits a seek command if video changed, drift > 2 seconds, or playback stopped — avoids unnecessary seeks during normal playback
+- `periodicSyncJob` is cancelled in `endGame()` and `onCleared()`
+- Added `PLAYBACK_SYNC_INTERVAL_MS = 5000` and `PLAYBACK_DRIFT_THRESHOLD_MS = 2000` constants to `GameViewModel.Companion`
+
+### 21.2 ~~Graceful Wi-Fi Direct failure handling~~ DONE
+
+`createGroup`, `discoverPeers`, and `connect` failures showed raw error codes as toasts. No retry was offered.
+
+**Changes:**
+- `createGame()`: sets `CONNECTING` state, on failure maps reason codes to human-readable messages (P2P_UNSUPPORTED, BUSY, ERROR), shows `UiError.Recoverable` with "Retry" action
+- `discoverPeers()`: failure shows `UiError.Recoverable` with "Retry"
+- `connectToPlayer()`: failure shows `UiError.Recoverable`
+
+### 21.3 ~~Runtime permissions for connectToPlayer~~ DONE
+
+`connectToPlayer()` was called from the player list tap handler without checking Wi-Fi P2P permissions first.
+
+**Changes:**
+- Wrapped `connectToPlayer()` call in `requirePermissions(wifiP2pPermissions())` in MainActivity's PlayerAdapter click listener
+
+### 21.4 ~~Lock orientation to portrait~~ DONE
+
+No orientation lock existed — rotating the phone during a game session would trigger a configuration change.
+
+**Changes:**
+- Added `android:screenOrientation="portrait"` to `MainActivity` in `AndroidManifest.xml`
+
+**Files modified:** `GameViewModel.kt`, `MainActivity.kt`, `AndroidManifest.xml`
+
+---
+
+## Priority 22 — Player Status & Readiness
+
+### 22.1 ~~Video pre-caching readiness tracking~~ DONE
+
+The game master had no way to know whether players had received all video files before starting the game.
+
+**Changes:**
+- Added `PlayerStatusMessage` (`@SerialName("player_status")`) containing `batteryLevel: Int` and `receivedVideos: List<String>`
+- Players periodically broadcast `PlayerStatusMessage` every 10 seconds via `startPeriodicStatusBroadcast()` (runs on `Dispatchers.Default` to avoid test interference)
+- `GameViewModel.onFileTransferSuccess(fileName)` tracks completed transfers in `receivedVideoFiles` set
+- `handlePlayerStatus()` on game master side updates each player's `readyVideoCount` and `totalVideoCount`
+- Extended `Player` data class with `batteryLevel`, `readyVideoCount`, `totalVideoCount` fields (default values for backward compat)
+- `PlayerAdapter` shows readiness indicator: green "Ready" when all videos received, orange "2/5" count when pending
+- `item_player.xml` updated with `video_ready_label` and `battery_label` TextViews
+- Cleanup: `periodicStatusJob` cancelled in `endGame()`, `handleEndGame()`, and `onCleared()`; `receivedVideoFiles` cleared on end game
+
+### 22.2 ~~Battery indicators per player~~ DONE
+
+During multi-hour woods sessions, the game master needs to know which devices are running low on battery.
+
+**Changes:**
+- Battery level read via `BatteryManager.BATTERY_PROPERTY_CAPACITY` in `getBatteryLevel()`
+- Included in `PlayerStatusMessage` alongside video readiness (piggybacks on the same periodic broadcast)
+- `PlayerAdapter` displays battery percentage with color coding: green (>30%), orange (16-30%), red (≤15%)
+- Battery indicator hidden for game master's own entry and players that haven't sent status yet (`batteryLevel == -1`)
+
+**Files modified:** `MessageEnvelope.kt`, `Player.kt`, `PlayerAdapter.kt`, `item_player.xml`, `GameViewModel.kt`, `MainActivity.kt`
+
+**Tests:** Added 2 serialization round-trip tests for `PlayerStatusMessage` (with videos, empty videos). All existing tests pass unchanged.
+
+### 22.3 Remote volume control
+
+Add `AdvancedCommand` for volume level so game master can fade in/out audio at narrative moments.
+
+### 22.4 Dark mode theme
+
+The app uses `DayNight` theme but no `values-night` override exists.
+
+### 22.5 Haptic feedback
+
+Game master triggers phone vibrations on player devices via `AdvancedCommand` for immersive moments.
+
+### 22.6 Session logging
+
+Log events (who joined, when, playback timeline) for post-session review.
+
+### 22.7 QR code join
+
+Game master shows a QR code encoding group info + password instead of requiring Wi-Fi Direct discovery + manual password entry.
+
+### 22.8 Cue system / branching narrative
+
+Instead of a linear video playlist, let the game master define cue points and trigger specific videos on demand.
+
+---
+
 ## Explanations — Operational Items
 
 The following item is not tracked as an implementation task. It involves external service setup that falls outside the normal code change workflow.

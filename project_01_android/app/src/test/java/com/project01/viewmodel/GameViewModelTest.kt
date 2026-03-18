@@ -118,21 +118,151 @@ class GameViewModelTest {
 
     @After
     fun tearDown() {
+        // Cancel viewModelScope coroutines (periodic sync/snapshot loops) before resetting dispatcher
+        try {
+            val method = gameViewModel.javaClass.getDeclaredMethod("onCleared")
+            method.isAccessible = true
+            method.invoke(gameViewModel)
+        } catch (_: Exception) {}
         Dispatchers.resetMain()
     }
 
     // --- Existing tests ---
 
     @Test
-    fun `turnOffScreen broadcasts correct AdvancedCommand`() = runTest {
+    fun `turnOffScreen broadcasts and emits locally`() = runTest {
+        var emitted: AdvancedCommand? = null
+        gameViewModel.advancedCommand.observeForever { emitted = it }
+
         gameViewModel.turnOffScreen()
+
         verify(mockGameSync).broadcast(AdvancedCommand(AdvancedCommandType.TURN_OFF_SCREEN))
+        assertNotNull(emitted)
+        assertEquals(AdvancedCommandType.TURN_OFF_SCREEN, emitted!!.type)
     }
 
     @Test
-    fun `deactivateTorch broadcasts correct AdvancedCommand`() = runTest {
+    fun `deactivateTorch broadcasts and emits locally`() = runTest {
+        var emitted: AdvancedCommand? = null
+        gameViewModel.advancedCommand.observeForever { emitted = it }
+
         gameViewModel.deactivateTorch()
+
         verify(mockGameSync).broadcast(AdvancedCommand(AdvancedCommandType.DEACTIVATE_TORCH))
+        assertNotNull(emitted)
+        assertEquals(AdvancedCommandType.DEACTIVATE_TORCH, emitted!!.type)
+    }
+
+    @Test
+    fun `turnOnScreen broadcasts and emits locally`() = runTest {
+        var emitted: AdvancedCommand? = null
+        gameViewModel.advancedCommand.observeForever { emitted = it }
+
+        gameViewModel.turnOnScreen()
+
+        verify(mockGameSync).broadcast(AdvancedCommand(AdvancedCommandType.TURN_ON_SCREEN))
+        assertNotNull(emitted)
+        assertEquals(AdvancedCommandType.TURN_ON_SCREEN, emitted!!.type)
+    }
+
+    @Test
+    fun `activateTorch broadcasts and emits locally`() = runTest {
+        var emitted: AdvancedCommand? = null
+        gameViewModel.advancedCommand.observeForever { emitted = it }
+
+        gameViewModel.activateTorch()
+
+        verify(mockGameSync).broadcast(AdvancedCommand(AdvancedCommandType.ACTIVATE_TORCH))
+        assertNotNull(emitted)
+        assertEquals(AdvancedCommandType.ACTIVATE_TORCH, emitted!!.type)
+    }
+
+    @Test
+    fun `endGame broadcasts EndGameMessage and stops game`() = runTest {
+        makeGameMaster("password")
+
+        gameViewModel.endGame()
+
+        verify(mockGameSync).broadcast(any<com.project01.session.EndGameMessage>())
+        verify(mockGameRepository).setGameStarted(false)
+        verify(mockSnapshotManager).clearSnapshot()
+        assertFalse(gameViewModel.isGameMaster())
+    }
+
+    @Test
+    fun `receiving EndGameMessage stops game for non-master`() {
+        var emitted: UiError? = null
+        gameViewModel.uiError.observeForever { emitted = it }
+
+        gameSyncEventLiveData.value = NetworkEvent.DataReceived(
+            com.project01.session.EndGameMessage(), "192.168.1.1"
+        )
+
+        verify(mockGameRepository).setGameStarted(false)
+        assertTrue(emitted is UiError.Informational)
+        assertEquals("Game ended by host", emitted!!.message)
+    }
+
+    // --- Video management tests ---
+
+    @Test
+    fun `addVideo updates local state and broadcasts`() = runTest {
+        val uri = Uri.parse("content://video1")
+        videosLiveData.value = emptyList()
+        whenever(mockGameRepository.getFileName(uri)).thenReturn("Test Video")
+
+        gameViewModel.addVideo(uri)
+
+        verify(mockGameRepository).restoreVideos(any())
+        verify(mockGameSync).broadcast(any<com.project01.session.VideoListMessage>())
+    }
+
+    @Test
+    fun `moveVideoUp updates local state and broadcasts`() = runTest {
+        val video1 = Video(Uri.parse("content://video1"), "Video 1")
+        val video2 = Video(Uri.parse("content://video2"), "Video 2")
+        videosLiveData.value = listOf(video1, video2)
+
+        gameViewModel.moveVideoUp(1)
+
+        verify(mockGameRepository).restoreVideos(listOf(video2, video1))
+        verify(mockGameSync).broadcast(any<com.project01.session.VideoListMessage>())
+    }
+
+    @Test
+    fun `moveVideoDown updates local state and broadcasts`() = runTest {
+        val video1 = Video(Uri.parse("content://video1"), "Video 1")
+        val video2 = Video(Uri.parse("content://video2"), "Video 2")
+        videosLiveData.value = listOf(video1, video2)
+
+        gameViewModel.moveVideoDown(0)
+
+        verify(mockGameRepository).restoreVideos(listOf(video2, video1))
+        verify(mockGameSync).broadcast(any<com.project01.session.VideoListMessage>())
+    }
+
+    @Test
+    fun `removeVideo updates local state and broadcasts`() = runTest {
+        val video1 = Video(Uri.parse("content://video1"), "Video 1")
+        val video2 = Video(Uri.parse("content://video2"), "Video 2")
+        videosLiveData.value = listOf(video1, video2)
+
+        gameViewModel.removeVideo(0)
+
+        verify(mockGameRepository).restoreVideos(listOf(video2))
+        verify(mockGameSync).broadcast(any<com.project01.session.VideoListMessage>())
+    }
+
+    @Test
+    fun `handleVideoList updates local state for all devices`() {
+        val videoDto = com.project01.session.VideoDto("content://video1", "Video 1")
+        val event = NetworkEvent.DataReceived(
+            com.project01.session.VideoListMessage(listOf(videoDto)), "192.168.1.5"
+        )
+
+        gameSyncEventLiveData.value = event
+
+        verify(mockGameRepository).restoreVideos(any())
     }
 
     // --- isGameMaster tests ---
@@ -360,7 +490,7 @@ class GameViewModelTest {
         )
 
         // Then join with password
-        gameViewModel.joinGame("mypassword")
+        gameViewModel.joinGame("Player", "mypassword")
 
         val expectedHash = PasswordHasher.hash("mypassword", nonce)
         verify(mockGameSync).broadcast(PasswordMessage(passwordHash = expectedHash))
@@ -371,7 +501,7 @@ class GameViewModelTest {
         val nonce = "def456"
 
         // Enter password first
-        gameViewModel.joinGame("mypassword")
+        gameViewModel.joinGame("Player", "mypassword")
 
         // Verify nothing sent yet (no challenge received)
         verify(mockGameSync, never()).broadcast(any())
@@ -479,7 +609,7 @@ class GameViewModelTest {
 
     @Test
     fun `protocol version mismatch emits Critical UiError and does not send password`() = runTest {
-        gameViewModel.joinGame("mypassword")
+        gameViewModel.joinGame("Player", "mypassword")
 
         var emitted: UiError? = null
         gameViewModel.uiError.observeForever { emitted = it }
@@ -501,7 +631,7 @@ class GameViewModelTest {
             PasswordChallenge(nonce = nonce, protocolVersion = MessageEnvelope.PROTOCOL_VERSION), "192.168.1.1"
         )
 
-        gameViewModel.joinGame("mypassword")
+        gameViewModel.joinGame("Player", "mypassword")
 
         val expectedHash = PasswordHasher.hash("mypassword", nonce)
         verify(mockGameSync).broadcast(PasswordMessage(passwordHash = expectedHash))

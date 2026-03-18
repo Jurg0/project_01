@@ -6,7 +6,9 @@ import kotlinx.serialization.Serializable
 @Serializable
 enum class AdvancedCommandType {
     TURN_OFF_SCREEN,
-    DEACTIVATE_TORCH
+    TURN_ON_SCREEN,
+    DEACTIVATE_TORCH,
+    ACTIVATE_TORCH
 }
 
 @Serializable

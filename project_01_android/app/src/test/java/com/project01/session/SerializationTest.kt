@@ -150,6 +150,30 @@ class SerializationTest {
     }
 
     @Test
+    fun `AdvancedCommand serialization round-trip with TURN_ON_SCREEN`() {
+        val original = AdvancedCommand(type = AdvancedCommandType.TURN_ON_SCREEN)
+        val deserialized = roundTrip(original) as AdvancedCommand
+        assertEquals(original, deserialized)
+        assertEquals(AdvancedCommandType.TURN_ON_SCREEN, deserialized.type)
+    }
+
+    @Test
+    fun `AdvancedCommand serialization round-trip with ACTIVATE_TORCH`() {
+        val original = AdvancedCommand(type = AdvancedCommandType.ACTIVATE_TORCH)
+        val deserialized = roundTrip(original) as AdvancedCommand
+        assertEquals(original, deserialized)
+        assertEquals(AdvancedCommandType.ACTIVATE_TORCH, deserialized.type)
+    }
+
+    @Test
+    fun `EndGameMessage serialization round-trip`() {
+        val original = EndGameMessage(timestamp = 1700000000000L)
+        val deserialized = roundTrip(original) as EndGameMessage
+        assertEquals(original, deserialized)
+        assertEquals(1700000000000L, deserialized.timestamp)
+    }
+
+    @Test
     fun `HeartbeatMsg serialization round-trip`() {
         val original = HeartbeatMsg(timestamp = 1700000000000L)
         val deserialized = roundTrip(original) as HeartbeatMsg
@@ -185,6 +209,26 @@ class SerializationTest {
         val deserialized = roundTrip(original) as VideoListMessage
         assertEquals(original, deserialized)
         assertTrue(deserialized.videos.isEmpty())
+    }
+
+    @Test
+    fun `PlayerStatusMessage serialization round-trip`() {
+        val original = PlayerStatusMessage(
+            batteryLevel = 85,
+            receivedVideos = listOf("video1.mp4", "video2.mp4")
+        )
+        val deserialized = roundTrip(original) as PlayerStatusMessage
+        assertEquals(original, deserialized)
+        assertEquals(85, deserialized.batteryLevel)
+        assertEquals(2, deserialized.receivedVideos.size)
+    }
+
+    @Test
+    fun `PlayerStatusMessage serialization round-trip with empty videos`() {
+        val original = PlayerStatusMessage(batteryLevel = 42)
+        val deserialized = roundTrip(original) as PlayerStatusMessage
+        assertEquals(42, deserialized.batteryLevel)
+        assertTrue(deserialized.receivedVideos.isEmpty())
     }
 
     @Test

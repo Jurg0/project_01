@@ -105,6 +105,10 @@ class GameRepository(private val application: Application) {
         _isGameStarted.postValue(started)
     }
 
+    fun updatePlayers(players: List<Player>) {
+        _players.postValue(players)
+    }
+
     fun restoreVideos(videos: List<Video>) {
         _videos.postValue(videos)
     }

@@ -1,11 +1,40 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-  <path
-      android:pathData="M31.9,44.2C31.9,44.2 31.9,44.2 31.9,44.2"
-      android:strokeWidth="1"
-      android:strokeColor="#000000"/>
+
+    <!-- Left tree -->
+    <path
+        android:fillColor="#1B5E20"
+        android:pathData="M30,75 L20,55 L25,55 L17,40 L23,40 L18,28 L42,28 L37,40 L43,40 L35,55 L40,55 Z" />
+    <!-- Left trunk -->
+    <path
+        android:fillColor="#5D4037"
+        android:pathData="M28,75 L28,82 L32,82 L32,75 Z" />
+
+    <!-- Right tree -->
+    <path
+        android:fillColor="#2E7D32"
+        android:pathData="M78,75 L68,55 L73,55 L65,40 L71,40 L66,28 L90,28 L85,40 L91,40 L83,55 L88,55 Z" />
+    <!-- Right trunk -->
+    <path
+        android:fillColor="#5D4037"
+        android:pathData="M76,75 L76,82 L80,82 L80,75 Z" />
+
+    <!-- Center play button circle -->
+    <path
+        android:fillColor="#1565C0"
+        android:pathData="M54,54m-18,0a18,18 0,1 1,36 0a18,18 0,1 1,-36 0" />
+
+    <!-- Play triangle -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M48,43 L48,65 L66,54 Z" />
+
+    <!-- Ground line -->
+    <path
+        android:fillColor="#33691E"
+        android:pathData="M10,82 L98,82 L98,88 L10,88 Z" />
+
 </vector>

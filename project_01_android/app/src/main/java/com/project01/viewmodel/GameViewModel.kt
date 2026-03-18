@@ -10,6 +10,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.net.Uri
+import android.os.BatteryManager
 import android.os.Build
 import android.net.wifi.p2p.WifiP2pConfig
 import android.net.wifi.p2p.WifiP2pDevice
@@ -25,7 +26,10 @@ import androidx.lifecycle.viewmodel.CreationExtras
 import com.project01.session.*
 import com.project01.ui.ConnectionStatus
 import com.project01.ui.UiError
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -64,6 +68,9 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     private var currentVideoIndex = 0
     private var currentPlaybackPosition = 0L
     private var currentIsPlaying = false
+    private var periodicSyncJob: Job? = null
+    private var periodicStatusJob: Job? = null
+    private val receivedVideoFiles = mutableSetOf<String>()
 
     private val connectionInfoObserver = Observer<android.net.wifi.p2p.WifiP2pInfo> { info ->
         handleConnectionInfo(info)
@@ -137,6 +144,25 @@ class GameViewModel(application: Application, val repository: GameRepository = G
                 _connectionState.postValue(ConnectionStatus.CONNECTED)
             }
             startPeriodicSnapshots()
+            if (info.isGroupOwner) {
+                startPeriodicPlaybackSync()
+            } else {
+                startPeriodicStatusBroadcast()
+            }
+        }
+    }
+
+    private fun startPeriodicPlaybackSync() {
+        periodicSyncJob?.cancel()
+        periodicSyncJob = viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+            while (isActive) {
+                delay(PLAYBACK_SYNC_INTERVAL_MS)
+                if (isGameMaster() && currentIsPlaying) {
+                    repository.gameSync.broadcast(
+                        PlaybackState(currentVideoIndex, currentPlaybackPosition, currentIsPlaying)
+                    )
+                }
+            }
         }
     }
 
@@ -183,6 +209,9 @@ class GameViewModel(application: Application, val repository: GameRepository = G
                     is PasswordMessage -> handlePasswordMessage(data, address)
                     is PasswordResponseMessage -> handlePasswordResponseMessage(data)
                     is GameStateSnapshot -> repository.snapshotManager.saveSnapshot(data)
+                    is EndGameMessage -> handleEndGame()
+                    is PlayerNameMessage -> handlePlayerName(data.playerName, address)
+                    is PlayerStatusMessage -> handlePlayerStatus(data, address)
                     is HeartbeatMsg -> { /* filtered by SocketNetworkManager */ }
                 }
             }
@@ -193,6 +222,8 @@ class GameViewModel(application: Application, val repository: GameRepository = G
                 if (!isGameMaster()) {
                     repository.gameSync.reconnectionManager.stopReconnecting()
                     _connectionState.postValue(ConnectionStatus.CONNECTED)
+                } else {
+                    addConnectedPlayer(event.address)
                 }
             }
             is NetworkEvent.ClientDisconnected -> {
@@ -205,6 +236,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
                         _connectionState.postValue(ConnectionStatus.DISCONNECTED)
                     }
                 } else {
+                    removeConnectedPlayer(event.address)
                     _uiError.postValue(UiError.Informational("Client disconnected: ${event.address}"))
                 }
             }
@@ -243,12 +275,104 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         }
     }
 
+    private fun addConnectedPlayer(address: String) {
+        val currentPlayers = players.value?.toMutableList() ?: mutableListOf()
+        if (currentPlayers.none { it.device.deviceAddress == address }) {
+            val device = WifiP2pDevice().apply {
+                deviceAddress = address
+                deviceName = address
+            }
+            currentPlayers.add(Player(device, address, false))
+            repository.updatePlayers(currentPlayers)
+        }
+    }
+
+    private fun removeConnectedPlayer(address: String) {
+        val currentPlayers = players.value?.toMutableList() ?: return
+        if (currentPlayers.removeAll { it.device.deviceAddress == address }) {
+            repository.updatePlayers(currentPlayers)
+        }
+    }
+
+    private fun handlePlayerName(name: String, address: String) {
+        if (isGameMaster()) {
+            val currentPlayers = players.value?.toMutableList() ?: return
+            val index = currentPlayers.indexOfFirst { it.device.deviceAddress == address }
+            if (index >= 0) {
+                val existing = currentPlayers[index]
+                currentPlayers[index] = Player(existing.device, name, existing.isGameMaster)
+                repository.updatePlayers(currentPlayers)
+            }
+        }
+    }
+
+    private fun handlePlayerStatus(status: PlayerStatusMessage, address: String) {
+        if (isGameMaster()) {
+            val currentPlayers = players.value?.toMutableList() ?: return
+            val totalVideos = videos.value?.size ?: 0
+            val index = currentPlayers.indexOfFirst { it.device.deviceAddress == address }
+            if (index >= 0) {
+                val existing = currentPlayers[index]
+                currentPlayers[index] = existing.copy(
+                    batteryLevel = status.batteryLevel,
+                    readyVideoCount = status.receivedVideos.size,
+                    totalVideoCount = totalVideos
+                )
+                repository.updatePlayers(currentPlayers)
+            }
+        }
+    }
+
+    fun onFileTransferSuccess(fileName: String) {
+        receivedVideoFiles.add(fileName)
+    }
+
+    private fun getBatteryLevel(): Int {
+        val batteryManager = getApplication<Application>().getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
+        return batteryManager?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1
+    }
+
+    private fun startPeriodicStatusBroadcast() {
+        periodicStatusJob?.cancel()
+        periodicStatusJob = viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+            while (isActive) {
+                delay(STATUS_BROADCAST_INTERVAL_MS)
+                if (!isGameMaster()) {
+                    repository.gameSync.broadcast(
+                        PlayerStatusMessage(
+                            batteryLevel = getBatteryLevel(),
+                            receivedVideos = receivedVideoFiles.toList()
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    private fun handleEndGame() {
+        periodicStatusJob?.cancel()
+        receivedVideoFiles.clear()
+        repository.setGameStarted(false)
+        repository.snapshotManager.clearSnapshot()
+        player = null
+        _connectionState.postValue(ConnectionStatus.DISCONNECTED)
+        _uiError.postValue(UiError.Informational("Game ended by host"))
+    }
+
     private fun handlePasswordResponseMessage(message: PasswordResponseMessage) {
         _passwordVerified.postValue(message.success)
+        if (message.success) {
+            localPlayerName?.let { name ->
+                viewModelScope.launch {
+                    repository.gameSync.broadcast(PlayerNameMessage(name))
+                }
+            }
+        }
     }
 
     private fun handleVideoList(newVideos: List<Video>, senderAddress: String) {
-        if (isGameMaster() == false) {
+        repository.restoreVideos(newVideos)
+        if (!isGameMaster()) {
             newVideos.forEach { video ->
                 thisDevice.value?.let {
                     requestFileTransfer(video.title, it.deviceAddress, senderAddress)
@@ -278,12 +402,14 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     private var gamePassword: String? = null
     private var pendingPassword: String? = null
     private var pendingNonce: String? = null
+    private var localPlayerName: String? = null
     private val _passwordVerified = MutableLiveData<Boolean>()
     val passwordVerified: LiveData<Boolean> = _passwordVerified
 
     @SuppressLint("MissingPermission") // Permission checked in MainActivity before calling
     fun createGame(password: String) {
         this.gamePassword = password
+        _connectionState.postValue(ConnectionStatus.CONNECTING)
         repository.wifiP2pManager.createGroup(
             repository.channel,
             object : WifiP2pManager.ActionListener {
@@ -292,7 +418,16 @@ class GameViewModel(application: Application, val repository: GameRepository = G
                 }
 
                 override fun onFailure(reason: Int) {
-                    repository.showToast("Group creation failed: $reason")
+                    _connectionState.postValue(ConnectionStatus.DISCONNECTED)
+                    val message = when (reason) {
+                        WifiP2pManager.P2P_UNSUPPORTED -> "Wi-Fi Direct not supported on this device"
+                        WifiP2pManager.BUSY -> "Wi-Fi Direct is busy. Try turning Wi-Fi off and on."
+                        WifiP2pManager.ERROR -> "Wi-Fi Direct error. Try turning Wi-Fi off and on."
+                        else -> "Game creation failed (error $reason)"
+                    }
+                    _uiError.postValue(UiError.Recoverable(message, "Retry") {
+                        createGame(password)
+                    })
                 }
             })
     }
@@ -307,12 +442,15 @@ class GameViewModel(application: Application, val repository: GameRepository = G
                 }
 
                 override fun onFailure(reason: Int) {
-                    repository.showToast("Discovery failed: $reason")
+                    _uiError.postValue(UiError.Recoverable("Peer discovery failed. Check Wi-Fi.", "Retry") {
+                        discoverPeers()
+                    })
                 }
             })
     }
 
-    fun joinGame(password: String) {
+    fun joinGame(name: String, password: String) {
+        localPlayerName = name
         pendingPassword = password
         pendingNonce?.let { nonce ->
             val hash = PasswordHasher.hash(password, nonce)
@@ -337,7 +475,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
                 }
 
                 override fun onFailure(reason: Int) {
-                    repository.showToast("Connection failed: $reason")
+                    _uiError.postValue(UiError.Recoverable("Connection failed. Try again."))
                 }
             })
     }
@@ -348,19 +486,52 @@ class GameViewModel(application: Application, val repository: GameRepository = G
             val video = Video(uri, fileName)
             val currentVideos = videos.value?.toMutableList() ?: mutableListOf()
             currentVideos.add(video)
+            repository.restoreVideos(currentVideos)
             repository.gameSync.broadcast(VideoListMessage(currentVideos.map { it.toDto() }))
         }
     }
 
     fun turnOffScreen() {
         viewModelScope.launch {
-            repository.gameSync.broadcast(AdvancedCommand(AdvancedCommandType.TURN_OFF_SCREEN))
+            val command = AdvancedCommand(AdvancedCommandType.TURN_OFF_SCREEN)
+            _advancedCommand.postValue(command)
+            repository.gameSync.broadcast(command)
+        }
+    }
+
+    fun turnOnScreen() {
+        viewModelScope.launch {
+            val command = AdvancedCommand(AdvancedCommandType.TURN_ON_SCREEN)
+            _advancedCommand.postValue(command)
+            repository.gameSync.broadcast(command)
         }
     }
 
     fun deactivateTorch() {
         viewModelScope.launch {
-            repository.gameSync.broadcast(AdvancedCommand(AdvancedCommandType.DEACTIVATE_TORCH))
+            val command = AdvancedCommand(AdvancedCommandType.DEACTIVATE_TORCH)
+            _advancedCommand.postValue(command)
+            repository.gameSync.broadcast(command)
+        }
+    }
+
+    fun activateTorch() {
+        viewModelScope.launch {
+            val command = AdvancedCommand(AdvancedCommandType.ACTIVATE_TORCH)
+            _advancedCommand.postValue(command)
+            repository.gameSync.broadcast(command)
+        }
+    }
+
+    fun endGame() {
+        viewModelScope.launch {
+            repository.gameSync.broadcast(EndGameMessage())
+            periodicSyncJob?.cancel()
+            periodicStatusJob?.cancel()
+            repository.setGameStarted(false)
+            repository.snapshotManager.clearSnapshot()
+            player = null
+            _connectionState.postValue(ConnectionStatus.DISCONNECTED)
         }
     }
 
@@ -374,6 +545,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
             if (position in 1..currentVideos.lastIndex) {
                 val video = currentVideos.removeAt(position)
                 currentVideos.add(position - 1, video)
+                repository.restoreVideos(currentVideos)
                 repository.gameSync.broadcast(VideoListMessage(currentVideos.map { it.toDto() }))
             }
         }
@@ -385,6 +557,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
             if (position in 0 until currentVideos.lastIndex) {
                 val video = currentVideos.removeAt(position)
                 currentVideos.add(position + 1, video)
+                repository.restoreVideos(currentVideos)
                 repository.gameSync.broadcast(VideoListMessage(currentVideos.map { it.toDto() }))
             }
         }
@@ -395,6 +568,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
             val currentVideos = videos.value?.toMutableList() ?: return@launch
             if (position in currentVideos.indices) {
                 currentVideos.removeAt(position)
+                repository.restoreVideos(currentVideos)
                 repository.gameSync.broadcast(VideoListMessage(currentVideos.map { it.toDto() }))
             }
         }
@@ -436,13 +610,17 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     }
 
     private fun applyPlaybackState(state: PlaybackState) {
+        val drift = Math.abs(state.playbackPosition - currentPlaybackPosition)
+        val videoChanged = state.videoIndex != currentVideoIndex
         currentVideoIndex = state.videoIndex
         currentPlaybackPosition = state.playbackPosition
         currentIsPlaying = state.playWhenReady
         if (state.playWhenReady) {
             _showVideo.postValue(Unit)
         }
-        _playbackCommand.postValue(PlaybackCommand(PlaybackCommandType.PLAY_PAUSE, state.videoIndex, state.playbackPosition, state.playWhenReady))
+        if (videoChanged || drift > PLAYBACK_DRIFT_THRESHOLD_MS || !state.playWhenReady) {
+            _playbackCommand.postValue(PlaybackCommand(PlaybackCommandType.PLAY_PAUSE, state.videoIndex, state.playbackPosition, state.playWhenReady))
+        }
     }
 
     private fun requestFileTransfer(
@@ -509,6 +687,10 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     }
 
     companion object {
+        const val PLAYBACK_SYNC_INTERVAL_MS = 5_000L
+        const val PLAYBACK_DRIFT_THRESHOLD_MS = 2_000L
+        const val STATUS_BROADCAST_INTERVAL_MS = 10_000L
+
         val Factory: ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T {
@@ -535,6 +717,8 @@ class GameViewModel(application: Application, val repository: GameRepository = G
 
     override fun onCleared() {
         super.onCleared()
+        periodicSyncJob?.cancel()
+        periodicStatusJob?.cancel()
         repository.snapshotManager.stopPeriodicSnapshots()
         repository.connectionInfo.removeObserver(connectionInfoObserver)
         repository.gameSyncEvent.removeObserver(gameSyncEventObserver)

@@ -7,18 +7,20 @@ import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.DialogFragment
 import com.project01.R
 
-class JoinGameDialogFragment(private val joinGameListener: (String) -> Unit) : DialogFragment() {
+class JoinGameDialogFragment(private val joinGameListener: (name: String, password: String) -> Unit) : DialogFragment() {
 
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
         return activity?.let {
             val builder = AlertDialog.Builder(it)
             val inflater = requireActivity().layoutInflater
             val view = inflater.inflate(R.layout.dialog_join_game, null)
+            val nameEditText = view.findViewById<EditText>(R.id.player_name)
             val passwordEditText = view.findViewById<EditText>(R.id.password)
 
             builder.setView(view)
                 .setPositiveButton("Join") { _, _ ->
-                    joinGameListener(passwordEditText.text.toString())
+                    val name = nameEditText.text.toString().ifBlank { "Player" }
+                    joinGameListener(name, passwordEditText.text.toString())
                 }
                 .setNegativeButton("Cancel") { _, _ ->
                     dialog?.cancel()

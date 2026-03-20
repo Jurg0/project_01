@@ -4,16 +4,14 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Single thin ring, slightly off-center -->
-    <path
-        android:fillColor="@android:color/transparent"
-        android:pathData="M54,56m-24,0a24,24 0,1 1,48 0a24,24 0,1 1,-48 0"
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="1" />
-
-    <!-- Small dot, off-center top-left — the anomaly -->
+    <!-- Vertical line — a crack, a signal, a threshold -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M44,44m-2.5,0a2.5,2.5 0,1 1,5 0a2.5,2.5 0,1 1,-5 0" />
+        android:pathData="M53.5,28 L54.5,28 L54.5,80 L53.5,80 Z" />
+
+    <!-- Small dot on the left — something watching -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M40,54m-2,0a2,2 0,1 1,4 0a2,2 0,1 1,-4 0" />
 
 </vector>

@@ -4,29 +4,30 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Outer glow ring -->
+    <!-- Scan line 1 (top) -->
     <path
-        android:fillColor="#1A64B5F6"
-        android:pathData="M54,54m-32,0a32,32 0,1 1,64 0a32,32 0,1 1,-64 0" />
+        android:fillColor="#1565C0"
+        android:pathData="M24,36 L84,36 L84,38 L24,38 Z" />
 
-    <!-- Inner glow ring -->
+    <!-- Scan line 2 -->
     <path
-        android:fillColor="#3364B5F6"
-        android:pathData="M54,54m-24,0a24,24 0,1 1,48 0a24,24 0,1 1,-48 0" />
+        android:fillColor="#1976D2"
+        android:pathData="M20,44 L88,44 L88,46 L20,46 Z" />
 
-    <!-- Core circle -->
-    <path
-        android:fillColor="#64B5F6"
-        android:pathData="M54,54m-16,0a16,16 0,1 1,32 0a16,16 0,1 1,-32 0" />
-
-    <!-- Eye slit / anomaly detector sensor -->
-    <path
-        android:fillColor="#0D47A1"
-        android:pathData="M54,46 Q62,54 54,62 Q46,54 54,46 Z" />
-
-    <!-- Pupil dot -->
+    <!-- Central waveform peak -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M54,54m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0" />
+        android:strokeWidth="0"
+        android:pathData="M20,54 L36,54 L40,40 L46,68 L52,34 L58,74 L64,38 L70,66 L74,54 L88,54 L88,56 L74,56 L70,68 L64,40 L58,76 L52,32 L46,70 L40,38 L36,56 L20,56 Z" />
+
+    <!-- Scan line 3 -->
+    <path
+        android:fillColor="#1976D2"
+        android:pathData="M20,62 L88,62 L88,64 L20,64 Z" />
+
+    <!-- Scan line 4 (bottom) -->
+    <path
+        android:fillColor="#1565C0"
+        android:pathData="M24,70 L84,70 L84,72 L24,72 Z" />
 
 </vector>

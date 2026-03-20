@@ -495,7 +495,6 @@ class MainActivity : AppCompatActivity() {
         binding.blackOverlay.visibility = View.GONE
         binding.gmOverlay.visibility = View.GONE
         binding.playerView.useController = true
-        binding.playerView.videoSurfaceView?.visibility = View.VISIBLE
         isGmOverlayVisible = false
         isScreenOff = false
         isTorchOn = false
@@ -561,6 +560,7 @@ class MainActivity : AppCompatActivity() {
         releasePlayer()
         exoPlayer = ExoPlayer.Builder(this).build()
         binding.playerView.player = exoPlayer
+        binding.playerView.videoSurfaceView?.visibility = View.GONE
 
         exoPlayer?.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {

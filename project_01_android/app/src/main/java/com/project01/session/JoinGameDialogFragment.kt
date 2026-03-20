@@ -11,7 +11,7 @@ class JoinGameDialogFragment(private val joinGameListener: (name: String, passwo
 
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
         return activity?.let {
-            val builder = AlertDialog.Builder(it)
+            val builder = AlertDialog.Builder(it, com.google.android.material.R.style.ThemeOverlay_MaterialComponents_MaterialAlertDialog)
             val inflater = requireActivity().layoutInflater
             val view = inflater.inflate(R.layout.dialog_join_game, null)
             val nameEditText = view.findViewById<EditText>(R.id.player_name)

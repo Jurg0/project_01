@@ -84,9 +84,9 @@ class VideoAdapter(
                 moveDownButton.visibility = View.VISIBLE
                 removeButton.visibility = View.VISIBLE
 
-                moveUpButton.setOnClickListener { onMoveUp(position) }
-                moveDownButton.setOnClickListener { onMoveDown(position) }
-                removeButton.setOnClickListener { onRemove(position) }
+                moveUpButton.setOnClickListener { onMoveUp(bindingAdapterPosition) }
+                moveDownButton.setOnClickListener { onMoveDown(bindingAdapterPosition) }
+                removeButton.setOnClickListener { onRemove(bindingAdapterPosition) }
             } else {
                 moveUpButton.visibility = View.GONE
                 moveDownButton.visibility = View.GONE

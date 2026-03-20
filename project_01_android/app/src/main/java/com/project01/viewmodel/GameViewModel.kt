@@ -71,6 +71,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     private var periodicSyncJob: Job? = null
     private var periodicStatusJob: Job? = null
     private val receivedVideoFiles = mutableSetOf<String>()
+    private var isEndingGame = false
 
     private val connectionInfoObserver = Observer<android.net.wifi.p2p.WifiP2pInfo> { info ->
         handleConnectionInfo(info)
@@ -131,6 +132,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
 
     private fun handleConnectionInfo(info: android.net.wifi.p2p.WifiP2pInfo) {
         if (info.groupFormed) {
+            isEndingGame = false
             repository.setGameStarted(true)
             if (info.isGroupOwner) {
                 player = thisDevice.value?.let { Player(it, it.deviceName, true) }
@@ -227,6 +229,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
                 }
             }
             is NetworkEvent.ClientDisconnected -> {
+                if (isEndingGame) return
                 if (!isGameMaster()) {
                     val host = lastHost
                     val port = lastPort
@@ -350,6 +353,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     }
 
     private fun handleEndGame() {
+        isEndingGame = true
         periodicStatusJob?.cancel()
         receivedVideoFiles.clear()
         repository.setGameStarted(false)
@@ -357,6 +361,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         player = null
         _connectionState.postValue(ConnectionStatus.DISCONNECTED)
         _uiError.postValue(UiError.Informational("Game ended by host"))
+        isEndingGame = false
     }
 
     private fun handlePasswordResponseMessage(message: PasswordResponseMessage) {
@@ -525,6 +530,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
 
     @SuppressLint("MissingPermission") // Permission checked in MainActivity before calling
     fun endGame() {
+        isEndingGame = true
         viewModelScope.launch {
             repository.gameSync.broadcast(EndGameMessage())
             periodicSyncJob?.cancel()
@@ -536,6 +542,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
             try {
                 repository.wifiP2pManager.removeGroup(repository.channel, null)
             } catch (_: Exception) {}
+            isEndingGame = false
         }
     }
 

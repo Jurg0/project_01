@@ -4,14 +4,29 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Single pine tree silhouette -->
+    <!-- Outer glow ring -->
+    <path
+        android:fillColor="#1A64B5F6"
+        android:pathData="M54,54m-32,0a32,32 0,1 1,64 0a32,32 0,1 1,-64 0" />
+
+    <!-- Inner glow ring -->
+    <path
+        android:fillColor="#3364B5F6"
+        android:pathData="M54,54m-24,0a24,24 0,1 1,48 0a24,24 0,1 1,-48 0" />
+
+    <!-- Core circle -->
+    <path
+        android:fillColor="#64B5F6"
+        android:pathData="M54,54m-16,0a16,16 0,1 1,32 0a16,16 0,1 1,-32 0" />
+
+    <!-- Eye slit / anomaly detector sensor -->
+    <path
+        android:fillColor="#0D47A1"
+        android:pathData="M54,46 Q62,54 54,62 Q46,54 54,46 Z" />
+
+    <!-- Pupil dot -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M54,24 L40,52 L45,52 L35,72 L42,72 L38,84 L70,84 L66,72 L73,72 L63,52 L68,52 Z" />
-
-    <!-- Trunk -->
-    <path
-        android:fillColor="#BBDEFB"
-        android:pathData="M50,84 L50,92 L58,92 L58,84 Z" />
+        android:pathData="M54,54m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0" />
 
 </vector>

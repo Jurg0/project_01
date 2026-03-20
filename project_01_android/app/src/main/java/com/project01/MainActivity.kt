@@ -169,11 +169,19 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.turnOffScreenButton.setOnClickListener {
-            gameViewModel.turnOffScreen()
+            if (isScreenOff) {
+                gameViewModel.turnOnScreen()
+            } else {
+                gameViewModel.turnOffScreen()
+            }
         }
 
         binding.deactivateTorchButton.setOnClickListener {
-            gameViewModel.deactivateTorch()
+            if (isTorchOn) {
+                gameViewModel.deactivateTorch()
+            } else {
+                gameViewModel.activateTorch()
+            }
         }
 
         // Double-tap on invisible resume button toggles GM overlay
@@ -410,21 +418,25 @@ class MainActivity : AppCompatActivity() {
                 binding.blackOverlay.visibility = View.VISIBLE
                 setScreenBrightness(0f)
                 binding.gmScreenToggleButton.text = "Screen On"
+                binding.turnOffScreenButton.text = "Screen On"
             }
             com.project01.session.AdvancedCommandType.TURN_ON_SCREEN -> {
                 isScreenOff = false
                 binding.blackOverlay.visibility = View.GONE
                 setScreenBrightness(-1f)
                 binding.gmScreenToggleButton.text = "Screen Off"
+                binding.turnOffScreenButton.text = "Screen"
             }
             com.project01.session.AdvancedCommandType.DEACTIVATE_TORCH -> {
                 isTorchOn = false
                 binding.gmTorchToggleButton.text = "Torch On"
+                binding.deactivateTorchButton.text = "Torch"
                 setTorchMode(false)
             }
             com.project01.session.AdvancedCommandType.ACTIVATE_TORCH -> {
                 isTorchOn = true
                 binding.gmTorchToggleButton.text = "Torch Off"
+                binding.deactivateTorchButton.text = "Torch Off"
                 setTorchMode(true)
             }
         }
@@ -474,14 +486,24 @@ class MainActivity : AppCompatActivity() {
 
         binding.errorBanner.visibility = View.GONE
         binding.mainContent.visibility = View.VISIBLE
+        binding.playbackControls.visibility = View.VISIBLE
         binding.sectionLabels.visibility = View.VISIBLE
+        binding.listsContainer.visibility = View.VISIBLE
+        binding.buttonBar.visibility = View.VISIBLE
+        binding.connectivityIndicator.visibility = View.VISIBLE
         binding.invisibleResumeButton.visibility = View.GONE
         binding.blackOverlay.visibility = View.GONE
         binding.gmOverlay.visibility = View.GONE
         binding.playerView.useController = true
+        binding.playerView.videoSurfaceView?.visibility = View.VISIBLE
         isGmOverlayVisible = false
         isScreenOff = false
         isTorchOn = false
+        binding.turnOffScreenButton.text = "Screen"
+        binding.deactivateTorchButton.text = "Torch"
+        binding.gmScreenToggleButton.text = "Screen Off"
+        binding.gmTorchToggleButton.text = "Torch On"
+        binding.gmPlaylistButton.text = "Playlist"
         setScreenBrightness(-1f)
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         binding.createGameButton.announceForAccessibility("Returned to lobby.")

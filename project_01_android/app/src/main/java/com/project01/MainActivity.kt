@@ -115,7 +115,7 @@ class MainActivity : AppCompatActivity() {
         binding.playerList.adapter = playerAdapter
 
         videoAdapter = VideoAdapter(
-            false,
+            true,
             { position -> gameViewModel.moveVideoUp(position) },
             { position -> gameViewModel.moveVideoDown(position) },
             { position -> gameViewModel.removeVideo(position) },
@@ -192,17 +192,22 @@ class MainActivity : AppCompatActivity() {
         binding.gmPlayPauseButton.setOnClickListener {
             exoPlayer?.playWhenReady = exoPlayer?.playWhenReady == false
             exoPlayer?.let {
+                if (it.playWhenReady) {
+                    binding.playerView.videoSurfaceView?.visibility = View.VISIBLE
+                }
                 gameViewModel.broadcastPlaybackState(it.currentPosition, it.playWhenReady, it.currentMediaItemIndex)
             }
         }
         binding.gmNextButton.setOnClickListener {
             exoPlayer?.seekToNextMediaItem()
+            binding.playerView.videoSurfaceView?.visibility = View.VISIBLE
             exoPlayer?.let {
                 gameViewModel.broadcastPlaybackState(it.currentPosition, it.playWhenReady, it.currentMediaItemIndex)
             }
         }
         binding.gmPreviousButton.setOnClickListener {
             exoPlayer?.seekToPreviousMediaItem()
+            binding.playerView.videoSurfaceView?.visibility = View.VISIBLE
             exoPlayer?.let {
                 gameViewModel.broadcastPlaybackState(it.currentPosition, it.playWhenReady, it.currentMediaItemIndex)
             }
@@ -286,8 +291,8 @@ class MainActivity : AppCompatActivity() {
             handleUiError(error)
         })
 
-        gameViewModel.showVideo.observe(this, Observer {
-            binding.playerView.videoSurfaceView?.visibility = View.VISIBLE
+        gameViewModel.showVideo.observe(this, Observer { show ->
+            binding.playerView.videoSurfaceView?.visibility = if (show) View.VISIBLE else View.GONE
         })
 
         gameViewModel.requestEnableBluetooth.observe(this, Observer {
@@ -469,6 +474,7 @@ class MainActivity : AppCompatActivity() {
 
         binding.errorBanner.visibility = View.GONE
         binding.mainContent.visibility = View.VISIBLE
+        binding.sectionLabels.visibility = View.VISIBLE
         binding.invisibleResumeButton.visibility = View.GONE
         binding.blackOverlay.visibility = View.GONE
         binding.gmOverlay.visibility = View.GONE
@@ -486,6 +492,7 @@ class MainActivity : AppCompatActivity() {
 
         // Hide lobby UI, show full-screen player
         binding.playbackControls.visibility = View.GONE
+        binding.sectionLabels.visibility = View.GONE
         binding.listsContainer.visibility = View.GONE
         binding.buttonBar.visibility = View.GONE
         binding.connectivityIndicator.visibility = View.GONE

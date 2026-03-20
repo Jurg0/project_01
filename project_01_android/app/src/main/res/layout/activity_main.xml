@@ -26,6 +26,7 @@
                 android:layout_height="0dp"
                 android:background="@color/safe_blue"
                 android:contentDescription="Video player"
+                app:surface_type="texture_view"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
@@ -77,6 +78,7 @@
 
         <!-- Section labels -->
         <LinearLayout
+            android:id="@+id/section_labels"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"

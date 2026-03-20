@@ -46,8 +46,8 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     private val _uiError = MutableLiveData<UiError>()
     val uiError: LiveData<UiError> = _uiError
 
-    private val _showVideo = MutableLiveData<Unit>()
-    val showVideo: LiveData<Unit> = _showVideo
+    private val _showVideo = MutableLiveData<Boolean>()
+    val showVideo: LiveData<Boolean> = _showVideo
 
     private val _playbackCommand = MutableLiveData<PlaybackCommand>()
     val playbackCommand: LiveData<PlaybackCommand> = _playbackCommand
@@ -523,15 +523,19 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         }
     }
 
+    @SuppressLint("MissingPermission") // Permission checked in MainActivity before calling
     fun endGame() {
         viewModelScope.launch {
             repository.gameSync.broadcast(EndGameMessage())
             periodicSyncJob?.cancel()
             periodicStatusJob?.cancel()
-            repository.setGameStarted(false)
             repository.snapshotManager.clearSnapshot()
             player = null
             _connectionState.postValue(ConnectionStatus.DISCONNECTED)
+            repository.setGameStarted(false)
+            try {
+                repository.wifiP2pManager.removeGroup(repository.channel, null)
+            } catch (_: Exception) {}
         }
     }
 
@@ -615,9 +619,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         currentVideoIndex = state.videoIndex
         currentPlaybackPosition = state.playbackPosition
         currentIsPlaying = state.playWhenReady
-        if (state.playWhenReady) {
-            _showVideo.postValue(Unit)
-        }
+        _showVideo.postValue(state.playWhenReady)
         if (videoChanged || drift > PLAYBACK_DRIFT_THRESHOLD_MS || !state.playWhenReady) {
             _playbackCommand.postValue(PlaybackCommand(PlaybackCommandType.PLAY_PAUSE, state.videoIndex, state.playbackPosition, state.playWhenReady))
         }

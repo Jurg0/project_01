@@ -4,37 +4,14 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Left tree -->
-    <path
-        android:fillColor="#1B5E20"
-        android:pathData="M30,75 L20,55 L25,55 L17,40 L23,40 L18,28 L42,28 L37,40 L43,40 L35,55 L40,55 Z" />
-    <!-- Left trunk -->
-    <path
-        android:fillColor="#5D4037"
-        android:pathData="M28,75 L28,82 L32,82 L32,75 Z" />
-
-    <!-- Right tree -->
-    <path
-        android:fillColor="#2E7D32"
-        android:pathData="M78,75 L68,55 L73,55 L65,40 L71,40 L66,28 L90,28 L85,40 L91,40 L83,55 L88,55 Z" />
-    <!-- Right trunk -->
-    <path
-        android:fillColor="#5D4037"
-        android:pathData="M76,75 L76,82 L80,82 L80,75 Z" />
-
-    <!-- Center play button circle -->
-    <path
-        android:fillColor="#1565C0"
-        android:pathData="M54,54m-18,0a18,18 0,1 1,36 0a18,18 0,1 1,-36 0" />
-
-    <!-- Play triangle -->
+    <!-- Single pine tree silhouette -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M48,43 L48,65 L66,54 Z" />
+        android:pathData="M54,24 L40,52 L45,52 L35,72 L42,72 L38,84 L70,84 L66,72 L73,72 L63,52 L68,52 Z" />
 
-    <!-- Ground line -->
+    <!-- Trunk -->
     <path
-        android:fillColor="#33691E"
-        android:pathData="M10,82 L98,82 L98,88 L10,88 Z" />
+        android:fillColor="#BBDEFB"
+        android:pathData="M50,84 L50,92 L58,92 L58,84 Z" />
 
 </vector>

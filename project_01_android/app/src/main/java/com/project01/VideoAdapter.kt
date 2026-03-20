@@ -3,7 +3,7 @@ package com.project01
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Button
+import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.ProgressBar
 import android.widget.TextView
@@ -61,9 +61,9 @@ class VideoAdapter(
 
     class VideoViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         private val videoTitle: TextView = itemView.findViewById(R.id.video_title)
-        private val moveUpButton: Button = itemView.findViewById(R.id.move_up_button)
-        private val moveDownButton: Button = itemView.findViewById(R.id.move_down_button)
-        private val removeButton: Button = itemView.findViewById(R.id.remove_button)
+        private val moveUpButton: ImageButton = itemView.findViewById(R.id.move_up_button)
+        private val moveDownButton: ImageButton = itemView.findViewById(R.id.move_down_button)
+        private val removeButton: ImageButton = itemView.findViewById(R.id.remove_button)
         private val progressBar: ProgressBar = itemView.findViewById(R.id.progress_bar)
         private val errorIcon: ImageView = itemView.findViewById(R.id.error_icon)
 

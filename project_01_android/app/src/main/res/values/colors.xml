@@ -10,6 +10,7 @@
     <color name="blue_500">#FF1565C0</color>
     <color name="blue_700">#FF0D47A1</color>
     <color name="blue_200">#FF64B5F6</color>
+    <color name="safe_blue">#FF1565C0</color>
     <color name="ic_launcher_background">#FF0D47A1</color>
     <color name="app_background">#FF0A1929</color>
 </resources>

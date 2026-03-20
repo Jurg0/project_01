@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
@@ -7,159 +7,226 @@
     android:background="@color/app_background"
     tools:context=".MainActivity">
 
-    <!-- Video player: fills top half in lobby mode, full screen in game mode -->
-    <androidx.media3.ui.PlayerView
-        android:id="@+id/player_view"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:contentDescription="Video player"
-        app:layout_constraintBottom_toTopOf="@+id/playback_controls"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
-
-    <!-- Playback controls: Previous / Play-Pause / Next -->
+    <!-- Main content: vertical LinearLayout with weighted distribution -->
     <LinearLayout
-        android:id="@+id/playback_controls"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        app:layout_constraintBottom_toTopOf="@+id/lists_container"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent">
+        android:id="@+id/main_content"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
 
-        <Button
-            android:id="@+id/previous_button"
-            android:layout_width="0dp"
+        <!-- Video player: fixed 16:9 aspect ratio via ratio constraint wrapper -->
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="3">
+
+            <androidx.media3.ui.PlayerView
+                android:id="@+id/player_view"
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:background="@color/safe_blue"
+                android:contentDescription="Video player"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent" />
+
+        </androidx.constraintlayout.widget.ConstraintLayout>
+
+        <!-- Playback controls -->
+        <LinearLayout
+            android:id="@+id/playback_controls"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:contentDescription="Play previous video"
-            android:text="Previous" />
+            android:orientation="horizontal"
+            android:paddingHorizontal="4dp">
 
-        <Button
-            android:id="@+id/play_pause_button"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:contentDescription="Toggle play and pause"
-            android:text="Play/Pause" />
+            <Button
+                android:id="@+id/previous_button"
+                style="@style/Widget.MaterialComponents.Button.TextButton"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:contentDescription="Play previous video"
+                android:text="Prev"
+                android:textColor="@android:color/white"
+                android:textSize="13sp" />
 
-        <Button
-            android:id="@+id/next_button"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:contentDescription="Play next video"
-            android:text="Next" />
-    </LinearLayout>
+            <Button
+                android:id="@+id/play_pause_button"
+                style="@style/Widget.MaterialComponents.Button.TextButton"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:contentDescription="Toggle play and pause"
+                android:text="Play/Pause"
+                android:textColor="@android:color/white"
+                android:textSize="13sp" />
 
-    <!-- Playlist and player lists side by side -->
-    <LinearLayout
-        android:id="@+id/lists_container"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:orientation="horizontal"
-        app:layout_constraintBottom_toTopOf="@+id/button_bar"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/playback_controls">
+            <Button
+                android:id="@+id/next_button"
+                style="@style/Widget.MaterialComponents.Button.TextButton"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:contentDescription="Play next video"
+                android:text="Next"
+                android:textColor="@android:color/white"
+                android:textSize="13sp" />
+        </LinearLayout>
 
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/player_list"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            tools:listitem="@layout/item_player" />
-
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/video_playlist"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            tools:listitem="@layout/item_video" />
-
-    </LinearLayout>
-
-    <!-- Bottom button bar with game master controls -->
-    <LinearLayout
-        android:id="@+id/button_bar"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:padding="8dp"
-        app:layout_constraintBottom_toTopOf="@+id/connectivity_indicator"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent">
-
+        <!-- Section labels -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal">
+            android:orientation="horizontal"
+            android:paddingHorizontal="12dp"
+            android:paddingVertical="4dp">
 
-            <Button
-                android:id="@+id/add_video_button"
+            <TextView
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:contentDescription="Add a video to the playlist"
-                android:text="Add Video" />
+                android:text="Players"
+                android:textColor="@color/blue_200"
+                android:textSize="12sp"
+                android:textStyle="bold" />
 
-            <Button
-                android:id="@+id/turn_off_screen_button"
+            <TextView
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:contentDescription="Turn off player screens"
-                android:text="Screen Off" />
-
-            <Button
-                android:id="@+id/deactivate_torch_button"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:contentDescription="Turn off player flashlights"
-                android:text="Torch Off" />
+                android:text="Playlist"
+                android:textColor="@color/blue_200"
+                android:textSize="12sp"
+                android:textStyle="bold" />
         </LinearLayout>
 
+        <!-- Lists: players + videos side by side -->
         <LinearLayout
+            android:id="@+id/lists_container"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="4"
+            android:orientation="horizontal"
+            android:paddingHorizontal="4dp">
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/player_list"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                tools:listitem="@layout/item_player" />
+
+            <View
+                android:layout_width="1dp"
+                android:layout_height="match_parent"
+                android:layout_marginVertical="4dp"
+                android:background="#33FFFFFF" />
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/video_playlist"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                tools:listitem="@layout/item_video" />
+        </LinearLayout>
+
+        <!-- Bottom button bar -->
+        <LinearLayout
+            android:id="@+id/button_bar"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal">
+            android:orientation="vertical"
+            android:paddingHorizontal="4dp"
+            android:paddingVertical="2dp">
 
-            <Button
-                android:id="@+id/create_game_button"
-                android:layout_width="0dp"
+            <!-- Game master tools row -->
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:contentDescription="Create a new game session"
-                android:text="Create Game" />
+                android:orientation="horizontal">
 
-            <Button
-                android:id="@+id/join_game_button"
-                android:layout_width="0dp"
+                <Button
+                    android:id="@+id/add_video_button"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="1"
+                    android:layout_marginHorizontal="2dp"
+                    android:contentDescription="Add a video to the playlist"
+                    android:text="+ Video"
+                    android:textColor="@android:color/white"
+                    android:textSize="12sp" />
+
+                <Button
+                    android:id="@+id/turn_off_screen_button"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="1"
+                    android:layout_marginHorizontal="2dp"
+                    android:contentDescription="Turn off player screens"
+                    android:text="Screen"
+                    android:textColor="@android:color/white"
+                    android:textSize="12sp" />
+
+                <Button
+                    android:id="@+id/deactivate_torch_button"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="1"
+                    android:layout_marginHorizontal="2dp"
+                    android:contentDescription="Toggle player flashlights"
+                    android:text="Torch"
+                    android:textColor="@android:color/white"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <!-- Session controls row -->
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:contentDescription="Join an existing game session"
-                android:text="Join Game" />
+                android:layout_marginTop="2dp"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/create_game_button"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_weight="1"
+                    android:layout_marginHorizontal="2dp"
+                    android:contentDescription="Create a new game session"
+                    android:text="Create Game"
+                    android:textSize="13sp" />
+
+                <Button
+                    android:id="@+id/join_game_button"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_weight="1"
+                    android:layout_marginHorizontal="2dp"
+                    android:contentDescription="Join an existing game session"
+                    android:text="Join Game"
+                    android:textSize="13sp" />
+            </LinearLayout>
         </LinearLayout>
 
-    </LinearLayout>
+        <!-- Connection status -->
+        <TextView
+            android:id="@+id/connectivity_indicator"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:accessibilityLiveRegion="polite"
+            android:contentDescription="Connection status"
+            android:gravity="center"
+            android:paddingVertical="4dp"
+            android:textColor="@android:color/white"
+            android:textSize="12sp"
+            tools:text="Disconnected" />
 
-    <!-- Connection status at the very bottom -->
-    <TextView
-        android:id="@+id/connectivity_indicator"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:accessibilityLiveRegion="polite"
-        android:contentDescription="Connection status"
-        android:paddingHorizontal="12dp"
-        android:paddingVertical="4dp"
-        android:textColor="@android:color/white"
-        android:textSize="14sp"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        tools:text="Connected" />
+    </LinearLayout>
 
     <!-- Full-screen black overlay for turn-off-screen command -->
     <FrameLayout
@@ -168,37 +235,27 @@
         android:layout_height="match_parent"
         android:background="@android:color/black"
         android:importantForAccessibility="no"
-        android:visibility="gone"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
+        android:visibility="gone" />
 
-    <!-- Invisible button for game master to resume from black overlay -->
+    <!-- Invisible full-screen tap target for game master (double-tap toggles controls) -->
     <View
         android:id="@+id/invisible_resume_button"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
         android:background="@android:color/transparent"
-        android:contentDescription="Resume game controls"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
+        android:contentDescription="Double-tap for game controls"
+        android:visibility="gone" />
 
-    <!-- Game master controls overlay (hidden, toggled by double-tap during game) -->
+    <!-- Game master controls overlay (bottom-anchored, toggled by double-tap) -->
     <LinearLayout
         android:id="@+id/gm_overlay"
-        android:layout_width="0dp"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="#CC000000"
-        android:gravity="center_horizontal"
+        android:layout_gravity="bottom"
+        android:background="#DD000000"
         android:orientation="vertical"
-        android:padding="16dp"
-        android:visibility="gone"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent">
+        android:padding="12dp"
+        android:visibility="gone">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -207,73 +264,125 @@
 
             <Button
                 android:id="@+id/gm_previous_button"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                android:layout_height="44dp"
                 android:layout_weight="1"
+                android:layout_marginHorizontal="2dp"
                 android:contentDescription="Play previous video"
-                android:text="Prev" />
+                android:text="Prev"
+                android:textColor="@android:color/white"
+                android:textSize="12sp" />
 
             <Button
                 android:id="@+id/gm_play_pause_button"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                android:layout_height="44dp"
                 android:layout_weight="1"
+                android:layout_marginHorizontal="2dp"
                 android:contentDescription="Toggle play and pause"
-                android:text="Play/Pause" />
+                android:text="Play/Pause"
+                android:textColor="@android:color/white"
+                android:textSize="12sp" />
 
             <Button
                 android:id="@+id/gm_next_button"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                android:layout_height="44dp"
                 android:layout_weight="1"
+                android:layout_marginHorizontal="2dp"
                 android:contentDescription="Play next video"
-                android:text="Next" />
+                android:text="Next"
+                android:textColor="@android:color/white"
+                android:textSize="12sp" />
         </LinearLayout>
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
             android:orientation="horizontal">
 
             <Button
                 android:id="@+id/gm_screen_toggle_button"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                android:layout_height="44dp"
                 android:layout_weight="1"
+                android:layout_marginHorizontal="2dp"
                 android:contentDescription="Toggle player screens"
-                android:text="Screen Off" />
+                android:text="Screen Off"
+                android:textColor="@android:color/white"
+                android:textSize="12sp" />
 
             <Button
                 android:id="@+id/gm_torch_toggle_button"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                android:layout_height="44dp"
                 android:layout_weight="1"
+                android:layout_marginHorizontal="2dp"
                 android:contentDescription="Toggle player flashlights"
-                android:text="Torch On" />
+                android:text="Torch On"
+                android:textColor="@android:color/white"
+                android:textSize="12sp" />
 
             <Button
                 android:id="@+id/gm_end_game_button"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                android:layout_height="44dp"
                 android:layout_weight="1"
+                android:layout_marginHorizontal="2dp"
+                android:backgroundTint="#D32F2F"
                 android:contentDescription="End game session"
-                android:text="End Game" />
+                android:text="End Game"
+                android:textSize="12sp" />
         </LinearLayout>
 
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/gm_add_video_button"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="44dp"
+                android:layout_weight="1"
+                android:layout_marginHorizontal="2dp"
+                android:contentDescription="Add a video to the playlist"
+                android:text="+ Video"
+                android:textColor="@android:color/white"
+                android:textSize="12sp" />
+
+            <Button
+                android:id="@+id/gm_playlist_button"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="44dp"
+                android:layout_weight="1"
+                android:layout_marginHorizontal="2dp"
+                android:contentDescription="Show or hide playlist"
+                android:text="Playlist"
+                android:textColor="@android:color/white"
+                android:textSize="12sp" />
+        </LinearLayout>
     </LinearLayout>
 
     <!-- Error banner at the top -->
     <com.google.android.material.card.MaterialCardView
         android:id="@+id/error_banner"
-        android:layout_width="0dp"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:layout_gravity="top"
         android:visibility="gone"
         app:cardBackgroundColor="#D32F2F"
         app:cardCornerRadius="0dp"
-        app:cardElevation="4dp"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent">
+        app:cardElevation="4dp">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -305,9 +414,7 @@
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:contentDescription="Dismiss"
                 android:src="@android:drawable/ic_menu_close_clear_cancel" />
-
         </LinearLayout>
-
     </com.google.android.material.card.MaterialCardView>
 
-</androidx.constraintlayout.widget.ConstraintLayout>
+</FrameLayout>

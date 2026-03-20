@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
+import android.view.WindowManager
 import android.widget.Toast
 import android.hardware.camera2.CameraManager
 import androidx.activity.result.contract.ActivityResultContracts
@@ -220,6 +221,14 @@ class MainActivity : AppCompatActivity() {
                 gameViewModel.activateTorch()
             }
         }
+        binding.gmAddVideoButton.setOnClickListener {
+            openDocumentLauncher.launch(arrayOf("video/*"))
+        }
+        binding.gmPlaylistButton.setOnClickListener {
+            val isVisible = binding.listsContainer.visibility == View.VISIBLE
+            binding.listsContainer.visibility = if (isVisible) View.GONE else View.VISIBLE
+            binding.gmPlaylistButton.text = if (isVisible) "Playlist" else "Hide List"
+        }
         binding.gmEndGameButton.setOnClickListener {
             androidx.appcompat.app.AlertDialog.Builder(this)
                 .setTitle("End Game?")
@@ -394,11 +403,13 @@ class MainActivity : AppCompatActivity() {
             com.project01.session.AdvancedCommandType.TURN_OFF_SCREEN -> {
                 isScreenOff = true
                 binding.blackOverlay.visibility = View.VISIBLE
+                setScreenBrightness(0f)
                 binding.gmScreenToggleButton.text = "Screen On"
             }
             com.project01.session.AdvancedCommandType.TURN_ON_SCREEN -> {
                 isScreenOff = false
                 binding.blackOverlay.visibility = View.GONE
+                setScreenBrightness(-1f)
                 binding.gmScreenToggleButton.text = "Screen Off"
             }
             com.project01.session.AdvancedCommandType.DEACTIVATE_TORCH -> {
@@ -412,6 +423,12 @@ class MainActivity : AppCompatActivity() {
                 setTorchMode(true)
             }
         }
+    }
+
+    private fun setScreenBrightness(brightness: Float) {
+        val params = window.attributes
+        params.screenBrightness = brightness // 0f = minimum, -1f = system default
+        window.attributes = params
     }
 
     private fun setTorchMode(enabled: Boolean) {
@@ -451,34 +468,35 @@ class MainActivity : AppCompatActivity() {
         videoAdapter.notifyDataSetChanged()
 
         binding.errorBanner.visibility = View.GONE
-        binding.playerView.visibility = View.VISIBLE
-        binding.playbackControls.visibility = View.VISIBLE
-        binding.listsContainer.visibility = View.VISIBLE
-        binding.buttonBar.visibility = View.VISIBLE
-        binding.connectivityIndicator.visibility = View.VISIBLE
+        binding.mainContent.visibility = View.VISIBLE
         binding.invisibleResumeButton.visibility = View.GONE
         binding.blackOverlay.visibility = View.GONE
         binding.gmOverlay.visibility = View.GONE
+        binding.playerView.useController = true
         isGmOverlayVisible = false
         isScreenOff = false
         isTorchOn = false
+        setScreenBrightness(-1f)
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         binding.createGameButton.announceForAccessibility("Returned to lobby.")
     }
 
     private fun showGame() {
         val isGameMaster = gameViewModel.isGameMaster()
 
-        binding.playerView.visibility = View.VISIBLE
-        binding.playerView.useController = false
-        binding.playerView.videoSurfaceView?.visibility = View.GONE
+        // Hide lobby UI, show full-screen player
         binding.playbackControls.visibility = View.GONE
         binding.listsContainer.visibility = View.GONE
         binding.buttonBar.visibility = View.GONE
         binding.connectivityIndicator.visibility = View.GONE
+        binding.playerView.useController = false
+        binding.playerView.videoSurfaceView?.visibility = View.GONE
         binding.gmOverlay.visibility = View.GONE
         isGmOverlayVisible = false
+        binding.gmPlaylistButton.text = "Playlist"
         binding.invisibleResumeButton.visibility = if (isGameMaster) View.VISIBLE else View.GONE
         binding.playerView.announceForAccessibility("Game started. Video player is active.")
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
 
     private fun updateUi(isGameStarted: Boolean) {

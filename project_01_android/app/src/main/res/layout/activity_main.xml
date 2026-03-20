@@ -239,6 +239,25 @@
         android:importantForAccessibility="no"
         android:visibility="gone" />
 
+    <!-- Pulse glow overlay for breathing effect on blue safe screen -->
+    <View
+        android:id="@+id/pulse_overlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@android:color/white"
+        android:importantForAccessibility="no"
+        android:alpha="0"
+        android:visibility="gone" />
+
+    <!-- White flash overlay for anomaly detection spike -->
+    <View
+        android:id="@+id/flash_overlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@android:color/white"
+        android:importantForAccessibility="no"
+        android:visibility="gone" />
+
     <!-- Invisible full-screen tap target for game master (double-tap toggles controls) -->
     <View
         android:id="@+id/invisible_resume_button"

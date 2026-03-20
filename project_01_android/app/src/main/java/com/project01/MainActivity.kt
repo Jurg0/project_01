@@ -3,13 +3,20 @@ package com.project01
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import android.widget.Toast
 import android.hardware.camera2.CameraManager
 import androidx.activity.result.contract.ActivityResultContracts
@@ -42,6 +49,7 @@ class MainActivity : AppCompatActivity() {
     private var isScreenOff = false
     private var isTorchOn = false
     private var isGmOverlayVisible = false
+    private var pulseAnimator: ObjectAnimator? = null
 
     private val openDocumentLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let {
@@ -201,21 +209,33 @@ class MainActivity : AppCompatActivity() {
             exoPlayer?.playWhenReady = exoPlayer?.playWhenReady == false
             exoPlayer?.let {
                 if (it.playWhenReady) {
-                    binding.playerView.videoSurfaceView?.visibility = View.VISIBLE
+                    stopPulseAnimation()
+                    playFlashEffect {
+                        binding.playerView.videoSurfaceView?.visibility = View.VISIBLE
+                    }
+                } else {
+                    binding.playerView.videoSurfaceView?.visibility = View.GONE
+                    startPulseAnimation()
                 }
                 gameViewModel.broadcastPlaybackState(it.currentPosition, it.playWhenReady, it.currentMediaItemIndex)
             }
         }
         binding.gmNextButton.setOnClickListener {
             exoPlayer?.seekToNextMediaItem()
-            binding.playerView.videoSurfaceView?.visibility = View.VISIBLE
+            stopPulseAnimation()
+            playFlashEffect {
+                binding.playerView.videoSurfaceView?.visibility = View.VISIBLE
+            }
             exoPlayer?.let {
                 gameViewModel.broadcastPlaybackState(it.currentPosition, it.playWhenReady, it.currentMediaItemIndex)
             }
         }
         binding.gmPreviousButton.setOnClickListener {
             exoPlayer?.seekToPreviousMediaItem()
-            binding.playerView.videoSurfaceView?.visibility = View.VISIBLE
+            stopPulseAnimation()
+            playFlashEffect {
+                binding.playerView.videoSurfaceView?.visibility = View.VISIBLE
+            }
             exoPlayer?.let {
                 gameViewModel.broadcastPlaybackState(it.currentPosition, it.playWhenReady, it.currentMediaItemIndex)
             }
@@ -300,7 +320,15 @@ class MainActivity : AppCompatActivity() {
         })
 
         gameViewModel.showVideo.observe(this, Observer { show ->
-            binding.playerView.videoSurfaceView?.visibility = if (show) View.VISIBLE else View.GONE
+            if (show) {
+                stopPulseAnimation()
+                playFlashEffect {
+                    binding.playerView.videoSurfaceView?.visibility = View.VISIBLE
+                }
+            } else {
+                binding.playerView.videoSurfaceView?.visibility = View.GONE
+                startPulseAnimation()
+            }
         })
 
         gameViewModel.requestEnableBluetooth.observe(this, Observer {
@@ -415,6 +443,7 @@ class MainActivity : AppCompatActivity() {
         when (command.type) {
             com.project01.session.AdvancedCommandType.TURN_OFF_SCREEN -> {
                 isScreenOff = true
+                stopPulseAnimation()
                 binding.blackOverlay.visibility = View.VISIBLE
                 setScreenBrightness(0f)
                 binding.gmScreenToggleButton.text = "Screen On"
@@ -424,6 +453,9 @@ class MainActivity : AppCompatActivity() {
                 isScreenOff = false
                 binding.blackOverlay.visibility = View.GONE
                 setScreenBrightness(-1f)
+                if (binding.playerView.videoSurfaceView?.visibility != View.VISIBLE) {
+                    startPulseAnimation()
+                }
                 binding.gmScreenToggleButton.text = "Screen Off"
                 binding.turnOffScreenButton.text = "Screen"
             }
@@ -440,6 +472,37 @@ class MainActivity : AppCompatActivity() {
                 setTorchMode(true)
             }
         }
+    }
+
+    private fun startPulseAnimation() {
+        binding.pulseOverlay.visibility = View.VISIBLE
+        pulseAnimator?.cancel()
+        pulseAnimator = ObjectAnimator.ofFloat(binding.pulseOverlay, "alpha", 0f, 0.07f).apply {
+            duration = 3000
+            repeatMode = ValueAnimator.REVERSE
+            repeatCount = ValueAnimator.INFINITE
+            start()
+        }
+    }
+
+    private fun stopPulseAnimation() {
+        pulseAnimator?.cancel()
+        pulseAnimator = null
+        binding.pulseOverlay.alpha = 0f
+        binding.pulseOverlay.visibility = View.GONE
+    }
+
+    private fun playFlashEffect(onComplete: () -> Unit) {
+        binding.flashOverlay.alpha = 1f
+        binding.flashOverlay.visibility = View.VISIBLE
+        binding.flashOverlay.animate()
+            .alpha(0f)
+            .setDuration(250)
+            .withEndAction {
+                binding.flashOverlay.visibility = View.GONE
+                onComplete()
+            }
+            .start()
     }
 
     private fun setScreenBrightness(brightness: Float) {
@@ -494,7 +557,9 @@ class MainActivity : AppCompatActivity() {
         binding.invisibleResumeButton.visibility = View.GONE
         binding.blackOverlay.visibility = View.GONE
         binding.gmOverlay.visibility = View.GONE
+        binding.flashOverlay.visibility = View.GONE
         binding.playerView.useController = true
+        stopPulseAnimation()
         isGmOverlayVisible = false
         isScreenOff = false
         isTorchOn = false
@@ -505,6 +570,12 @@ class MainActivity : AppCompatActivity() {
         binding.gmPlaylistButton.text = "Playlist"
         setScreenBrightness(-1f)
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        // Restore action bar and system bars
+        supportActionBar?.show()
+        WindowCompat.setDecorFitsSystemWindows(window, true)
+        WindowInsetsControllerCompat(window, binding.root).show(WindowInsetsCompat.Type.systemBars())
+
         binding.createGameButton.announceForAccessibility("Returned to lobby.")
     }
 
@@ -525,6 +596,16 @@ class MainActivity : AppCompatActivity() {
         binding.invisibleResumeButton.visibility = if (isGameMaster) View.VISIBLE else View.GONE
         binding.playerView.announceForAccessibility("Game started. Video player is active.")
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        startPulseAnimation()
+
+        // Immersive fullscreen: hide action bar, status bar, navigation bar
+        supportActionBar?.hide()
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        WindowInsetsControllerCompat(window, binding.root).let { controller ->
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+            controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
     }
 
     private fun updateUi(isGameStarted: Boolean) {

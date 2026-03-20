@@ -560,7 +560,11 @@ class MainActivity : AppCompatActivity() {
         releasePlayer()
         exoPlayer = ExoPlayer.Builder(this).build()
         binding.playerView.player = exoPlayer
+        binding.playerView.setShutterBackgroundColor(resources.getColor(R.color.safe_blue, theme))
         binding.playerView.videoSurfaceView?.visibility = View.GONE
+
+        // Reload media items if videos were already added
+        gameViewModel.videos.value?.let { updatePlayerPlaylist(it) }
 
         exoPlayer?.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {

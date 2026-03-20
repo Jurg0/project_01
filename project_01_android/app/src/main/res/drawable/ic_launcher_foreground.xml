@@ -4,30 +4,40 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Scan line 1 (top) -->
+    <!-- Outer radar ring -->
     <path
         android:fillColor="#1565C0"
-        android:pathData="M24,36 L84,36 L84,38 L24,38 Z" />
+        android:pathData="M54,54m-28,0a28,28 0,1 1,56 0a28,28 0,1 1,-56 0"
+        android:strokeColor="#1E88E5"
+        android:strokeWidth="1.5" />
 
-    <!-- Scan line 2 -->
+    <!-- Middle radar ring -->
     <path
-        android:fillColor="#1976D2"
-        android:pathData="M20,44 L88,44 L88,46 L20,46 Z" />
+        android:fillColor="@android:color/transparent"
+        android:pathData="M54,54m-19,0a19,19 0,1 1,38 0a19,19 0,1 1,-38 0"
+        android:strokeColor="#42A5F5"
+        android:strokeWidth="1" />
 
-    <!-- Central waveform peak -->
+    <!-- Inner radar ring -->
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M54,54m-10,0a10,10 0,1 1,20 0a10,10 0,1 1,-20 0"
+        android:strokeColor="#42A5F5"
+        android:strokeWidth="1" />
+
+    <!-- Crosshair horizontal -->
+    <path
+        android:fillColor="#42A5F5"
+        android:pathData="M26,53.5 L82,53.5 L82,54.5 L26,54.5 Z" />
+
+    <!-- Crosshair vertical -->
+    <path
+        android:fillColor="#42A5F5"
+        android:pathData="M53.5,26 L54.5,26 L54.5,82 L53.5,82 Z" />
+
+    <!-- Detection blip -->
     <path
         android:fillColor="#FFFFFF"
-        android:strokeWidth="0"
-        android:pathData="M20,54 L36,54 L40,40 L46,68 L52,34 L58,74 L64,38 L70,66 L74,54 L88,54 L88,56 L74,56 L70,68 L64,40 L58,76 L52,32 L46,70 L40,38 L36,56 L20,56 Z" />
-
-    <!-- Scan line 3 -->
-    <path
-        android:fillColor="#1976D2"
-        android:pathData="M20,62 L88,62 L88,64 L20,64 Z" />
-
-    <!-- Scan line 4 (bottom) -->
-    <path
-        android:fillColor="#1565C0"
-        android:pathData="M24,70 L84,70 L84,72 L24,72 Z" />
+        android:pathData="M54,42m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0" />
 
 </vector>

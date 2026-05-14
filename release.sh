@@ -64,6 +64,12 @@ echo "$GIT_LOG"
 echo ""
 
 echo "Building debug APK..."
+# gradlew bails on a stale JAVA_HOME before Gradle gets to read
+# org.gradle.java.home from gradle.properties. Clear it if it points to
+# a directory that doesn't have bin/java; gradle.properties wins from there.
+if [ -n "${JAVA_HOME:-}" ] && [ ! -x "$JAVA_HOME/bin/java" ]; then
+    unset JAVA_HOME
+fi
 ./project_01_android/gradlew -p ./project_01_android assembleDebug
 
 # SIGNING_TODO: Uncomment after setting up release signing (see README.md):

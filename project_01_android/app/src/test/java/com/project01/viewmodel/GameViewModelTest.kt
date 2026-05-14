@@ -15,6 +15,7 @@ import com.project01.session.AdvancedCommandType
 import com.project01.session.NetworkEvent
 import com.project01.session.GameSync
 import com.project01.session.MessageEnvelope
+import com.project01.session.PlaylistStore
 import com.project01.session.PasswordChallenge
 import com.project01.session.PasswordHasher
 import com.project01.session.PasswordMessage
@@ -71,6 +72,8 @@ class GameViewModelTest {
     @Mock
     private lateinit var mockSnapshotManager: SnapshotManager
     @Mock
+    private lateinit var mockPlaylistStore: PlaylistStore
+    @Mock
     private lateinit var mockWifiP2pManager: WifiP2pManager
     @Mock
     private lateinit var mockWifiP2pChannel: WifiP2pManager.Channel
@@ -96,6 +99,7 @@ class GameViewModelTest {
 
         `when`(mockGameRepository.gameSync).thenReturn(mockGameSync)
         `when`(mockGameRepository.snapshotManager).thenReturn(mockSnapshotManager)
+        `when`(mockGameRepository.playlistStore).thenReturn(mockPlaylistStore)
         `when`(mockGameSync.reconnectionManager).thenReturn(mockReconnectionManager)
         `when`(mockReconnectionManager.state).thenReturn(
             kotlinx.coroutines.flow.MutableStateFlow(ReconnectionManager.ReconnectionState.Idle)
@@ -270,54 +274,6 @@ class GameViewModelTest {
     @Test
     fun `isGameMaster returns false by default`() {
         assertFalse(gameViewModel.isGameMaster())
-    }
-
-    // --- playNextVideo tests ---
-
-    @Test
-    fun `playNextVideo emits NEXT command when not at last video`() {
-        val videos = listOf(
-            Video(Uri.parse("content://video1"), "Video 1"),
-            Video(Uri.parse("content://video2"), "Video 2"),
-            Video(Uri.parse("content://video3"), "Video 3")
-        )
-        videosLiveData.value = videos
-
-        var emitted: PlaybackCommand? = null
-        gameViewModel.playbackCommand.observeForever { emitted = it }
-
-        gameViewModel.playNextVideo(0)
-
-        assertNotNull(emitted)
-        assertEquals(PlaybackCommandType.NEXT, emitted!!.type)
-    }
-
-    @Test
-    fun `playNextVideo emits PLAY_PAUSE command when at last video`() {
-        val videos = listOf(
-            Video(Uri.parse("content://video1"), "Video 1"),
-            Video(Uri.parse("content://video2"), "Video 2")
-        )
-        videosLiveData.value = videos
-
-        var emitted: PlaybackCommand? = null
-        gameViewModel.playbackCommand.observeForever { emitted = it }
-
-        gameViewModel.playNextVideo(1) // Last index
-
-        assertNotNull(emitted)
-        assertEquals(PlaybackCommandType.PLAY_PAUSE, emitted!!.type)
-    }
-
-    @Test
-    fun `playNextVideo does nothing when videos is null`() {
-        // videos LiveData has no value set
-        var emitted: PlaybackCommand? = null
-        gameViewModel.playbackCommand.observeForever { emitted = it }
-
-        gameViewModel.playNextVideo(0)
-
-        assertNull(emitted)
     }
 
     // --- onVideoSelected tests ---

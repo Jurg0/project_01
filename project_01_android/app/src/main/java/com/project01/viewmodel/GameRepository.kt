@@ -53,6 +53,7 @@ class GameRepository(private val application: Application) {
     val gameSync = GameSync(SocketNetworkManager())
     val fileTransfer = FileTransfer()
     val snapshotManager = SnapshotManager(java.io.File(application.filesDir, "game_state_snapshot.json"))
+    val playlistStore = PlaylistStore(java.io.File(application.filesDir, "playlists"))
     private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     val intentFilter = IntentFilter().apply {

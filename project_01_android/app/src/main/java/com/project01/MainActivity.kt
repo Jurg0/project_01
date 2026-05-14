@@ -3,14 +3,13 @@ package com.project01
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.animation.ObjectAnimator
-import android.animation.ValueAnimator
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.GestureDetector
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
@@ -49,7 +48,6 @@ class MainActivity : AppCompatActivity() {
     private var isScreenOff = false
     private var isTorchOn = false
     private var isGmOverlayVisible = false
-    private var pulseAnimator: ObjectAnimator? = null
 
     private val openDocumentLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let {
@@ -91,14 +89,6 @@ class MainActivity : AppCompatActivity() {
             arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.NEARBY_WIFI_DEVICES)
         } else {
             arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
-        }
-    }
-
-    private fun bluetoothPermissions(): Array<String> {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
-        } else {
-            arrayOf(Manifest.permission.BLUETOOTH, Manifest.permission.BLUETOOTH_ADMIN)
         }
     }
 
@@ -155,26 +145,8 @@ class MainActivity : AppCompatActivity() {
             openDocumentLauncher.launch(arrayOf("video/*"))
         }
 
-        binding.playPauseButton.setOnClickListener {
-            exoPlayer?.playWhenReady = exoPlayer?.playWhenReady == false
-            exoPlayer?.let {
-                gameViewModel.broadcastPlaybackState(it.currentPosition, it.playWhenReady, it.currentMediaItemIndex)
-            }
-        }
-
-        binding.nextButton.setOnClickListener {
-            exoPlayer?.seekToNextMediaItem()
-            exoPlayer?.let {
-                gameViewModel.broadcastPlaybackState(it.currentPosition, it.playWhenReady, it.currentMediaItemIndex)
-            }
-        }
-
-        binding.previousButton.setOnClickListener {
-            exoPlayer?.seekToPreviousMediaItem()
-            exoPlayer?.let {
-                gameViewModel.broadcastPlaybackState(it.currentPosition, it.playWhenReady, it.currentMediaItemIndex)
-            }
-        }
+        binding.savePlaylistButton.setOnClickListener { showSavePlaylistDialog() }
+        binding.loadPlaylistButton.setOnClickListener { showLoadPlaylistDialog() }
 
         binding.turnOffScreenButton.setOnClickListener {
             if (isScreenOff) {
@@ -192,11 +164,17 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Double-tap on invisible resume button toggles GM overlay
+        // invisible_resume_button hides three GM-only gestures so the player UI stays clean:
+        //  - double-tap: toggle the GM control overlay
+        //  - long-press: confirm End Game
         val gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onDoubleTap(e: MotionEvent): Boolean {
                 toggleGmOverlay()
                 return true
+            }
+
+            override fun onLongPress(e: MotionEvent) {
+                showEndGameDialog()
             }
         })
         binding.invisibleResumeButton.setOnTouchListener { _, event ->
@@ -204,74 +182,166 @@ class MainActivity : AppCompatActivity() {
             true
         }
 
-        // GM overlay controls
-        binding.gmPlayPauseButton.setOnClickListener {
-            exoPlayer?.playWhenReady = exoPlayer?.playWhenReady == false
-            exoPlayer?.let {
-                if (it.playWhenReady) {
-                    stopPulseAnimation()
-                    playFlashEffect {
-                        binding.playerView.videoSurfaceView?.visibility = View.VISIBLE
-                    }
-                } else {
-                    binding.playerView.videoSurfaceView?.visibility = View.GONE
-                    startPulseAnimation()
-                }
-                gameViewModel.broadcastPlaybackState(it.currentPosition, it.playWhenReady, it.currentMediaItemIndex)
-            }
-        }
-        binding.gmNextButton.setOnClickListener {
-            exoPlayer?.seekToNextMediaItem()
-            stopPulseAnimation()
-            playFlashEffect {
-                binding.playerView.videoSurfaceView?.visibility = View.VISIBLE
-            }
-            exoPlayer?.let {
-                gameViewModel.broadcastPlaybackState(it.currentPosition, it.playWhenReady, it.currentMediaItemIndex)
-            }
-        }
-        binding.gmPreviousButton.setOnClickListener {
-            exoPlayer?.seekToPreviousMediaItem()
-            stopPulseAnimation()
-            playFlashEffect {
-                binding.playerView.videoSurfaceView?.visibility = View.VISIBLE
-            }
-            exoPlayer?.let {
-                gameViewModel.broadcastPlaybackState(it.currentPosition, it.playWhenReady, it.currentMediaItemIndex)
-            }
-        }
-        binding.gmScreenToggleButton.setOnClickListener {
-            if (isScreenOff) {
-                gameViewModel.turnOnScreen()
-            } else {
-                gameViewModel.turnOffScreen()
-            }
-        }
-        binding.gmTorchToggleButton.setOnClickListener {
-            if (isTorchOn) {
-                gameViewModel.deactivateTorch()
-            } else {
-                gameViewModel.activateTorch()
-            }
-        }
-        binding.gmAddVideoButton.setOnClickListener {
-            openDocumentLauncher.launch(arrayOf("video/*"))
-        }
+        // GM overlay controls — three buttons total.
+        binding.gmPreviousButton.setOnClickListener { onGmPrevious() }
+        binding.gmNextButton.setOnClickListener { onGmPlayNext() }
+        binding.gmLightButton.setOnClickListener { onGmToggleLight() }
         binding.gmPlaylistButton.setOnClickListener {
             val isVisible = binding.listsContainer.visibility == View.VISIBLE
             binding.listsContainer.visibility = if (isVisible) View.GONE else View.VISIBLE
-            binding.gmPlaylistButton.text = if (isVisible) "Playlist" else "Hide List"
         }
-        binding.gmEndGameButton.setOnClickListener {
-            androidx.appcompat.app.AlertDialog.Builder(this)
-                .setTitle("End Game?")
-                .setMessage("This will end the game for all connected players.")
-                .setPositiveButton("End Game") { _, _ ->
-                    gameViewModel.endGame()
+    }
+
+    private fun onGmPrevious() {
+        exoPlayer?.let { player ->
+            player.seekToPreviousMediaItem()
+            player.playWhenReady = true
+            playFlashEffect { binding.playerView.videoSurfaceView?.visibility = View.VISIBLE }
+            gameViewModel.broadcastPlaybackState(player.currentPosition, player.playWhenReady, player.currentMediaItemIndex)
+        }
+    }
+
+    private fun onGmPlayNext() {
+        val player = exoPlayer ?: return
+        when {
+            player.playWhenReady -> {
+                // Playing → pause back to blue safe-screen.
+                player.playWhenReady = false
+                gameViewModel.broadcastPlaybackState(player.currentPosition, player.playWhenReady, player.currentMediaItemIndex)
+            }
+            else -> {
+                // Paused. If we're at the end of an item (pauseAtEndOfMediaItems), advance first.
+                val duration = player.duration
+                val atEnd = duration > 0 && player.currentPosition >= duration - 500
+                if (atEnd) {
+                    player.seekToNextMediaItem()
                 }
-                .setNegativeButton("Cancel", null)
-                .show()
+                player.playWhenReady = true
+                playFlashEffect { binding.playerView.videoSurfaceView?.visibility = View.VISIBLE }
+                gameViewModel.broadcastPlaybackState(player.currentPosition, player.playWhenReady, player.currentMediaItemIndex)
+            }
         }
+    }
+
+    private fun onGmToggleLight() {
+        // "Light off" = total darkness (torch off + screen off). "Light on" = normal.
+        // The two outputs are linked so the GM has a single ambient-state switch.
+        val lightsOff = isScreenOff || !isTorchOn
+        gameViewModel.setLights(lightsOff)
+    }
+
+    /**
+     * Bluetooth presenters expose themselves as HID keyboards. Android delivers their key
+     * events to the focused window — so the GM just needs to pair the remote in system
+     * settings and the events land here. We map the common presenter keys to the three
+     * GM actions defined in M3.
+     *
+     * Volume keys are intentionally NOT mapped. They'd conflict with the GM phone's own
+     * media volume during a session.
+     */
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val isGameMaster = gameViewModel.isGameMaster()
+        val isGameStarted = gameViewModel.isGameStarted.value == true
+        if (!isGameMaster || !isGameStarted) {
+            return super.dispatchKeyEvent(event)
+        }
+        val handled = when (event.keyCode) {
+            KeyEvent.KEYCODE_DPAD_RIGHT,
+            KeyEvent.KEYCODE_PAGE_DOWN,
+            KeyEvent.KEYCODE_MEDIA_NEXT -> true
+            KeyEvent.KEYCODE_DPAD_LEFT,
+            KeyEvent.KEYCODE_PAGE_UP,
+            KeyEvent.KEYCODE_MEDIA_PREVIOUS -> true
+            KeyEvent.KEYCODE_DPAD_CENTER,
+            KeyEvent.KEYCODE_SPACE,
+            KeyEvent.KEYCODE_ENTER,
+            KeyEvent.KEYCODE_F5,
+            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> true
+            else -> false
+        }
+        if (!handled) return super.dispatchKeyEvent(event)
+        // Run the action on the DOWN edge only; still consume UP so the OS doesn't act on it.
+        if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+            when (event.keyCode) {
+                KeyEvent.KEYCODE_DPAD_RIGHT,
+                KeyEvent.KEYCODE_PAGE_DOWN,
+                KeyEvent.KEYCODE_MEDIA_NEXT -> onGmPlayNext()
+                KeyEvent.KEYCODE_DPAD_LEFT,
+                KeyEvent.KEYCODE_PAGE_UP,
+                KeyEvent.KEYCODE_MEDIA_PREVIOUS -> onGmPrevious()
+                KeyEvent.KEYCODE_DPAD_CENTER,
+                KeyEvent.KEYCODE_SPACE,
+                KeyEvent.KEYCODE_ENTER,
+                KeyEvent.KEYCODE_F5,
+                KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> onGmToggleLight()
+            }
+        }
+        return true
+    }
+
+    private fun showSavePlaylistDialog() {
+        val current = gameViewModel.videos.value
+        if (current.isNullOrEmpty()) {
+            Toast.makeText(this, "Playlist is empty", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val input = android.widget.EditText(this).apply {
+            hint = "Playlist name"
+            setSingleLine()
+        }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Save Playlist As")
+            .setView(input)
+            .setPositiveButton("Save") { _, _ ->
+                val name = input.text.toString().trim()
+                if (name.isNotEmpty()) {
+                    gameViewModel.savePlaylistAs(name)
+                    Toast.makeText(this, "Saved \"$name\"", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun showLoadPlaylistDialog() {
+        val names = gameViewModel.listSavedPlaylists()
+        if (names.isEmpty()) {
+            Toast.makeText(this, "No saved playlists", Toast.LENGTH_SHORT).show()
+            return
+        }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Load Playlist")
+            .setItems(names.toTypedArray()) { _, which ->
+                val name = names[which]
+                gameViewModel.loadNamedPlaylist(name)
+                Toast.makeText(this, "Loaded \"$name\"", Toast.LENGTH_SHORT).show()
+            }
+            .setNeutralButton("Delete…") { _, _ -> showDeletePlaylistDialog(names) }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun showDeletePlaylistDialog(names: List<String>) {
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Delete Playlist")
+            .setItems(names.toTypedArray()) { _, which ->
+                val name = names[which]
+                gameViewModel.deleteSavedPlaylist(name)
+                Toast.makeText(this, "Deleted \"$name\"", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun showEndGameDialog() {
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("End Game?")
+            .setMessage("This will end the game for all connected players.")
+            .setPositiveButton("End Game") { _, _ ->
+                gameViewModel.endGame()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun observeViewModel() {
@@ -321,13 +391,11 @@ class MainActivity : AppCompatActivity() {
 
         gameViewModel.showVideo.observe(this, Observer { show ->
             if (show) {
-                stopPulseAnimation()
                 playFlashEffect {
                     binding.playerView.videoSurfaceView?.visibility = View.VISIBLE
                 }
             } else {
                 binding.playerView.videoSurfaceView?.visibility = View.GONE
-                startPulseAnimation()
             }
         })
 
@@ -443,53 +511,33 @@ class MainActivity : AppCompatActivity() {
         when (command.type) {
             com.project01.session.AdvancedCommandType.TURN_OFF_SCREEN -> {
                 isScreenOff = true
-                stopPulseAnimation()
                 binding.blackOverlay.visibility = View.VISIBLE
                 setScreenBrightness(0f)
-                binding.gmScreenToggleButton.text = "Screen On"
                 binding.turnOffScreenButton.text = "Screen On"
             }
             com.project01.session.AdvancedCommandType.TURN_ON_SCREEN -> {
                 isScreenOff = false
                 binding.blackOverlay.visibility = View.GONE
                 setScreenBrightness(-1f)
-                if (binding.playerView.videoSurfaceView?.visibility != View.VISIBLE) {
-                    startPulseAnimation()
-                }
-                binding.gmScreenToggleButton.text = "Screen Off"
                 binding.turnOffScreenButton.text = "Screen"
             }
             com.project01.session.AdvancedCommandType.DEACTIVATE_TORCH -> {
                 isTorchOn = false
-                binding.gmTorchToggleButton.text = "Torch On"
                 binding.deactivateTorchButton.text = "Torch"
                 setTorchMode(false)
             }
             com.project01.session.AdvancedCommandType.ACTIVATE_TORCH -> {
                 isTorchOn = true
-                binding.gmTorchToggleButton.text = "Torch Off"
                 binding.deactivateTorchButton.text = "Torch Off"
                 setTorchMode(true)
             }
         }
+        updateGmLightButton()
     }
 
-    private fun startPulseAnimation() {
-        binding.pulseOverlay.visibility = View.VISIBLE
-        pulseAnimator?.cancel()
-        pulseAnimator = ObjectAnimator.ofFloat(binding.pulseOverlay, "alpha", 0f, 0.07f).apply {
-            duration = 3000
-            repeatMode = ValueAnimator.REVERSE
-            repeatCount = ValueAnimator.INFINITE
-            start()
-        }
-    }
-
-    private fun stopPulseAnimation() {
-        pulseAnimator?.cancel()
-        pulseAnimator = null
-        binding.pulseOverlay.alpha = 0f
-        binding.pulseOverlay.visibility = View.GONE
+    private fun updateGmLightButton() {
+        // ○ when lights on (full sight), ● when lights off (darkness mode).
+        binding.gmLightButton.text = if (!isScreenOff && isTorchOn) "○" else "●"
     }
 
     private fun playFlashEffect(onComplete: () -> Unit) {
@@ -549,7 +597,7 @@ class MainActivity : AppCompatActivity() {
 
         binding.errorBanner.visibility = View.GONE
         binding.mainContent.visibility = View.VISIBLE
-        binding.playbackControls.visibility = View.VISIBLE
+        binding.playerContainer.visibility = View.GONE
         binding.sectionLabels.visibility = View.VISIBLE
         binding.listsContainer.visibility = View.VISIBLE
         binding.buttonBar.visibility = View.VISIBLE
@@ -559,15 +607,12 @@ class MainActivity : AppCompatActivity() {
         binding.gmOverlay.visibility = View.GONE
         binding.flashOverlay.visibility = View.GONE
         binding.playerView.useController = true
-        stopPulseAnimation()
         isGmOverlayVisible = false
         isScreenOff = false
         isTorchOn = false
         binding.turnOffScreenButton.text = "Screen"
         binding.deactivateTorchButton.text = "Torch"
-        binding.gmScreenToggleButton.text = "Screen Off"
-        binding.gmTorchToggleButton.text = "Torch On"
-        binding.gmPlaylistButton.text = "Playlist"
+        updateGmLightButton()
         setScreenBrightness(-1f)
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
@@ -581,9 +626,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun showGame() {
         val isGameMaster = gameViewModel.isGameMaster()
+        videoAdapter.isGameMaster = isGameMaster
+        videoAdapter.notifyDataSetChanged()
 
         // Hide lobby UI, show full-screen player
-        binding.playbackControls.visibility = View.GONE
+        binding.playerContainer.visibility = View.VISIBLE
         binding.sectionLabels.visibility = View.GONE
         binding.listsContainer.visibility = View.GONE
         binding.buttonBar.visibility = View.GONE
@@ -592,12 +639,9 @@ class MainActivity : AppCompatActivity() {
         binding.playerView.videoSurfaceView?.visibility = View.GONE
         binding.gmOverlay.visibility = View.GONE
         isGmOverlayVisible = false
-        binding.gmPlaylistButton.text = "Playlist"
         binding.invisibleResumeButton.visibility = if (isGameMaster) View.VISIBLE else View.GONE
         binding.playerView.announceForAccessibility("Game started. Video player is active.")
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-
-        startPulseAnimation()
 
         // Immersive fullscreen: hide action bar, status bar, navigation bar
         supportActionBar?.hide()
@@ -633,13 +677,16 @@ class MainActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         releasePlayer()
-        gameViewModel.onPause()
         unregisterReceiver(gameViewModel.repository.broadcastReceiver)
     }
 
     private fun initializePlayer() {
         releasePlayer()
-        exoPlayer = ExoPlayer.Builder(this).build()
+        exoPlayer = ExoPlayer.Builder(this).build().apply {
+            // Game master controls pacing — never auto-advance between videos.
+            // Each video ends on the blue safe-screen; GM presses Next to play the next one.
+            pauseAtEndOfMediaItems = true
+        }
         binding.playerView.player = exoPlayer
         binding.playerView.setShutterBackgroundColor(resources.getColor(R.color.safe_blue, theme))
         binding.playerView.videoSurfaceView?.visibility = View.GONE
@@ -648,13 +695,13 @@ class MainActivity : AppCompatActivity() {
         gameViewModel.videos.value?.let { updatePlayerPlaylist(it) }
 
         exoPlayer?.addListener(object : Player.Listener {
-            override fun onPlaybackStateChanged(state: Int) {
-                if (state == Player.STATE_ENDED) {
-                    exoPlayer?.currentMediaItemIndex?.let { gameViewModel.playNextVideo(it) }
-                }
-            }
-
             override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (!isPlaying) {
+                    // Catches the pauseAtEndOfMediaItems case so the blue safe-screen shows
+                    // between videos. Show-on-play is handled by the GM buttons themselves
+                    // so the flash fires immediately on press, not after the buffer.
+                    binding.playerView.videoSurfaceView?.visibility = View.GONE
+                }
                 exoPlayer?.let {
                     gameViewModel.broadcastPlaybackState(
                         it.currentPosition,

@@ -1,934 +1,314 @@
-# Implementation Plan
+# Roadmap
 
-This document outlines improvements for the project, organized by priority. Items within each priority tier are independent and can be tackled in any order.
+Forward-looking work, organized into milestones. Open items only — completed work is summarized in the archive at the bottom.
 
----
+## How this document works
 
-## Priority 1 — Crash Fixes & Data Corruption ✅ DONE
+Work is grouped into thematic **milestones** (M1, M2, …). Items within a milestone are independent and can be tackled in any order; milestones themselves are loosely ordered by urgency for the next field test.
 
-These issues cause crashes or silent data loss in normal usage.
+Each item carries a tag:
 
-### 1.1 ~~Fix thread safety in SocketNetworkManager~~ DONE
+- 🐛 **BUG** — broken behavior; root-cause analysis included
+- ⚙️ **FIX** — small targeted change
+- 🎯 **REFINE** — improvement to existing behavior
+- ✨ **FEATURE** — new capability
 
-`clients` and `clientOutputStreams` are plain `mutableMapOf` accessed from multiple coroutines without synchronization. `broadcast()` iterates the map while `removeClient()` modifies it concurrently, causing `ConcurrentModificationException`.
-
-**Changes:**
-- ~~Replace `mutableMapOf` with `ConcurrentHashMap` for both `clients` and `clientOutputStreams`~~
-- ~~Use a snapshot (`clientOutputStreams.values.toList()`) when iterating in `broadcast()` to avoid concurrent modification during iteration~~
-- ~~Add try-catch around individual stream writes in `broadcast()` so one failed client doesn't abort the broadcast to all others~~
-
-Additionally: failed clients in `broadcast()` are now cleaned up (removed from maps, socket closed) so dead streams don't persist.
-
-### 1.2 ~~Fix manifest attribute typo~~ DONE
-
-~~Line 19 of `AndroidManifest.xml` has `android.maxSdkVersion="32"` (dot) instead of `android:maxSdkVersion="32"` (colon). The attribute is silently ignored, so `WRITE_EXTERNAL_STORAGE` is granted on all API levels instead of only up to 32.~~
-
-### 1.3 ~~Guard BroadcastReceiver unregister~~ DONE
-
-`GameViewModel.onPause()` calls `unregisterReceiver(bluetoothReceiver)` unconditionally. If `startBluetoothDiscovery()` was never called, this crashes with `IllegalArgumentException: Receiver not registered`.
-
-**Changes:**
-- ~~Track registration state with a boolean flag `isBluetoothReceiverRegistered`~~
-- ~~Set flag in `startBluetoothDiscovery()`, clear it in `onPause()`~~
-- ~~Only call `unregisterReceiver` when the flag is true~~
-
-### 1.4 ~~Add bounds checks to video list operations~~ DONE
-
-`removeVideo(position)` and `moveVideoUp/Down(position)` call `removeAt(position)` without validating that `position` is within `currentVideos.indices`. Stale adapter positions after rapid user input cause `IndexOutOfBoundsException`.
-
-**Changes:**
-- ~~Guard each operation with `if (position in currentVideos.indices)`~~
-
-### 1.5 ~~Guard camera ID access for torch control~~ DONE
-
-`MainActivity.handleAdvancedCommand()` accesses `cameraManager.cameraIdList[0]` without checking if the list is empty. Devices without a rear camera or flash crash with `IndexOutOfBoundsException`.
-
-**Changes:**
-- ~~Check `cameraIdList.isNotEmpty()` before indexing~~
-- ~~Show a toast if no flash is available~~
-
-### 1.6 ~~Fix socket leak on null host address~~ DONE
-
-In `SocketNetworkManager`, both `startServer()` and `connectTo()` use `client.inetAddress.hostAddress?.let { ... }` to store the socket. If the address is null, the socket is accepted/connected but never stored, handled, or closed — a silent resource leak.
-
-**Changes:**
-- ~~Close the socket in an `else` branch (or `?: run { client.close() }`)~~
-- ~~Log a warning when this occurs~~
-
-Additionally: extracted a `TAG` companion constant for consistent log tags across the class.
+Status is denoted in the heading: `○` open, `◐` in progress, `●` done. Move to the Archive section when `●`.
 
 ---
 
-## Priority 2 — Resource Leaks & Lifecycle Issues ✅ DONE
+## M1 — Stable Sessions
 
-These don't crash immediately but degrade stability over time.
+Blocker bugs. The next field test cannot run reliably until these are fixed.
 
-### 2.1 ~~Fix observeForever leak in GameViewModel~~ DONE
+### ● M1.1 🐛 Playlist controls inert during game session
 
-`init` block calls `repository.connectionInfo.observeForever { ... }` but the observer is never removed in `onCleared()`. Across configuration changes, observers accumulate.
+**Symptom:** Delete / move-up / move-down on playlist items don't work after `Create Game`, even when the playlist is revealed via the GM overlay's "Playlist" toggle.
 
-**Changes:**
-- ~~Store the observer in a field~~
-- ~~Remove it in `onCleared()` with `repository.connectionInfo.removeObserver(observer)`~~
+**Root cause:** `VideoAdapter.isGameMaster` is only set inside `showLobby()` (MainActivity.kt:546-548). At app start, `showLobby()` runs before a game exists, so `gameViewModel.isGameMaster()` returns `false` and the adapter flag is captured as `false`. When the GM then creates a game, `showGame()` does **not** refresh the flag — the per-row Move/Delete buttons stay hidden inside the row layout, so the user sees titles but no controls when toggling the playlist visible via the GM overlay.
 
-Both `connectionInfo` and `gameSyncEvent` observers were stored as named fields and removed in `onCleared()`.
+**Fix applied:** `showGame()` now sets `videoAdapter.isGameMaster = isGameMaster` and calls `notifyDataSetChanged()`, mirroring `showLobby()`. The GM-overlay-toggle UX is unchanged (still hidden by default, revealed on tap) — when revealed, the rows now bind with their buttons.
 
-### 2.2 ~~Close streams explicitly in SocketNetworkManager.handleClient~~ DONE
+**Files modified:** `MainActivity.kt:582-585`
 
-`ObjectOutputStream` and `ObjectInputStream` are created but never explicitly closed. `client.close()` in the `finally` block implicitly closes them, but this is fragile — if stream construction partially fails, the underlying socket may not close cleanly.
+### ● M1.2 🐛 Playlist controls vanish after End Game → new game cycle
 
-**Changes:**
-- ~~Wrap stream usage in `.use {}` blocks, or close streams explicitly in the `finally` block before closing the socket~~
+**Symptom:** Game master ends a session, starts another, playlist controls no longer appear.
 
-Streams are now declared before `try`, closed individually in `finally` (each wrapped in its own try-catch so one failure doesn't prevent the others), followed by the socket close.
+**Root cause:** Same bug as M1.1, observed at a later stage. `VideoAdapter.isGameMaster` was never refreshed in `showGame()`, only in `showLobby()`. After `endGame()`, `showLobby()` sets the flag to `false` (player is `null`); when the next game starts, `showGame()` did not re-set the flag.
 
-### 2.3 ~~Fix shutdown race in SocketNetworkManager~~ DONE
+**Fix:** Covered by the M1.1 change. Because `setGameStarted` uses `postValue` (async), by the time `showGame()` runs in the restart, `handleConnectionInfo` has already assigned `player` synchronously (GameViewModel.kt:138). So `isGameMaster()` returns `true` when `showGame()` reads it, and the M1.1 refresh now propagates that to the adapter.
 
-`shutdown()` cancels the coroutine scope then immediately closes the server socket. A coroutine blocked on `accept()` may still be running.
+**No additional code change required.**
 
-**Changes:**
-- ~~Close `serverSocket` first (which unblocks `accept()` with an exception)~~
-- ~~Then cancel the coroutine scope~~
-- ~~Wrap each close operation in try-catch so one failure doesn't prevent the others~~
+### ● M1.3 🐛 Video transfer to players fails
 
-Also clears both maps after closing all resources to prevent stale references.
+**Symptom:** Players never actually receive videos.
 
-### 2.4 ~~Close Bluetooth socket in BluetoothRemoteControl~~ DONE
+**Root cause:** Three interlocking bugs:
 
-`manageMyConnectedSocket()` reads from a socket in a blocking loop but never closes it when the loop exits on IOException.
+1. **Address-type mismatch.** `FileTransferRequest.senderAddress` / `targetAddress` were filled with `WifiP2pDevice.deviceAddress` (a MAC address) and the GM's TCP-source address (an IP) respectively. The two values are in different namespaces and cannot be compared.
 
-**Changes:**
-- ~~Close the socket in a `finally` block after the read loop~~
+2. **Broadcast doesn't loop back.** A client (player) `broadcast()` only writes to its single OutputStream (to the server). The server (GM) receives it, but the player never receives its own broadcast. So the receive branch — gated on `thisDevice == targetAddress`, which only matches on the player — was unreachable: the player who would match never got the message.
 
-Restructured the method: the try-catch now wraps the entire loop, and a `finally` block closes both the `inputStream` and `socket` (each guarded independently).
+3. **GM never matched either.** The outer guard `thisDevice == request.targetAddress` checks GM's address against the player's address — they don't match, so the send branch never fired.
 
-### 2.5 ~~Fix ExoPlayer double-initialization~~ DONE
+Net result: nobody sent and nobody received. Worse, even if the GM had entered the branch, it called `sendFileWithRetry(request.senderAddress, …)` — using its own IP as the host to connect to, not the player's.
 
-~~If `onResume()` is called twice without an intervening `onPause()`, `initializePlayer()` creates a new ExoPlayer without releasing the previous one.~~
+**Fix applied:**
 
-**Changes:**
-- ~~Call `releasePlayer()` at the start of `initializePlayer()`, or guard with a null check on `exoPlayer`~~
+- `handleFileTransferRequest(request, fromIp)` — now takes the TCP source IP from `NetworkEvent.DataReceived`. On the GM, it connects to that IP at `request.port` and sends. Player branch removed entirely (it was unreachable and the player initiates receiving on its own side anyway).
+- `requestFileTransfer` (the player path) — now launches `startReceivingWithRetry(port, outputFile)` *before* broadcasting the request, so the player's `ServerSocket` is bound (or about to be) by the time the GM connects back. The existing exponential backoff in `sendFileWithRetry` covers any residual race.
+- `handleGameSyncEvent` — passes `address` (the sender IP) to `handleFileTransferRequest`.
 
----
+The `senderAddress` / `targetAddress` fields in `FileTransferRequest` are retained on the wire (informational only) so the protocol version doesn't have to bump.
 
-## Priority 3 — Architecture Refactoring ✅ DONE
+**Files modified:** `GameViewModel.kt` (lines 206, 389-401, 635-655)
 
-### 3.1 ~~Extract responsibilities from GameViewModel~~ DONE
+### ● M1.4 🐛 Players keep reconnecting after Game Master ends session
 
-~~`GameViewModel` (404 lines) is a god class handling Wi-Fi P2P, Bluetooth, file operations, video management, playback control, and network event dispatch.~~
+**Symptom:** GM presses `End Game`. Players' devices stay in a reconnect loop forever instead of returning to the initial lobby.
 
-**Changes:**
-- ~~Moved `getFileName()` (ContentResolver query) and `findFreePort()` into `GameRepository`~~
-- ~~BroadcastReceiver registration/unregistration moved to MainActivity (done in 3.3)~~
-- ~~Bluetooth management remains in GameViewModel for now (extracting to a separate class would add complexity without clear benefit at this stage)~~
+**Root cause:** Two interacting issues.
+1. `handleEndGame()` didn't stop the reconnection manager. After GM tore down the group, the player's TCP socket dropped and `ClientDisconnected` fired, going straight into `startReconnecting()` at line 237.
+2. `isEndingGame` was set to `true` at the start of `handleEndGame()` and to `false` at the end — but the disconnect event from the GM's group teardown arrives *after* `handleEndGame()` returns. So the `if (isEndingGame) return` guard at line 232 was already past, and the reconnect loop started.
 
-### 3.2 ~~Fix Repository encapsulation~~ DONE
+**Fix applied:**
+- `handleEndGame()` and `endGame()` both call `reconnectionManager.stopReconnecting()`.
+- The trailing `isEndingGame = false` line is removed from both. The flag is now reset in `handleConnectionInfo()` (line 135) at the start of the next session — keeps it `true` across the entire end-game lifecycle, including the trailing disconnect event.
+- Both paths also reset state to the initial app state: clear videos, clear player list, null `player` / `lastHost` / `lastPort`, post `DISCONNECTED`. The `setGameStarted(false)` call moved to the end of `handleEndGame()` so the lobby observer sees a fully-reset state.
 
-~~`GameViewModel` directly writes to `repository._isGameStarted.postValue(true)` — the underscore-prefixed `MutableLiveData` is exposed as a public field, breaking encapsulation.~~
+**Files modified:** `GameViewModel.kt:355-373, 531-554`
 
-**Changes:**
-- ~~Make `_isGameStarted` private in `GameRepository`~~
-- ~~Expose a public `fun setGameStarted(started: Boolean)` method~~
-- ~~Apply the same pattern to `_toastMessage` and any other directly-mutated LiveData~~
+### ● M1.5 🐛 Disconcerting white pulse during game session
 
-### 3.3 ~~Fix Repository-Activity lifecycle mismatch~~ DONE
+**Symptom:** A continuous low-alpha white pulse runs over the game session, breaking immersion.
 
-~~`GameRepository.onPause()` unregisters a BroadcastReceiver and stops a Service, but Repository lives in ViewModel scope (survives configuration changes) while these are Activity-lifecycle concerns.~~
+**Root cause:** `showGame()` started `pulseAnimator` unconditionally. The pulse was originally a "paused/idle" affordance; users found it more distracting than helpful.
 
-**Changes:**
-- ~~Moved receiver registration/unregistration to MainActivity.onResume()/onPause()~~
-- ~~Moved ConnectionService stop to MainActivity.onPause()~~
-- ~~Removed onPause()/onResume() from GameRepository~~
-- ~~Exposed broadcastReceiver and intentFilter as public from Repository~~
+**Fix applied:** Removed entirely.
+- Deleted `pulse_overlay` View from `activity_main.xml`.
+- Deleted `startPulseAnimation()` / `stopPulseAnimation()` methods.
+- Deleted `pulseAnimator` field.
+- Deleted `android.animation.ObjectAnimator` / `ValueAnimator` imports (no other callers).
+- Deleted all 10 call sites.
 
-### 3.4 ~~Delete dead code~~ DONE
+**Files modified:** `MainActivity.kt`, `res/layout/activity_main.xml`
 
-- ~~`GameSession.kt` — zero references anywhere in the codebase. Delete it.~~
-- ~~`ExampleUnitTest.kt` — boilerplate `2+2=4` test from project template. Delete it.~~
+### ◐ M1.6 🐛 White strip at bottom of screen on Samsung S9
 
----
+**Symptom:** A white strip appears at the bottom of the screen during game session on Samsung S9.
 
-## Priority 4 — Robustness & Protocol ✅ DONE
+**Root cause:** Immersive mode (`WindowCompat.setDecorFitsSystemWindows(window, false)` + hiding `systemBars`) leaves the window background visible behind Samsung's gesture-nav hint area. The theme inherited `Theme.MaterialComponents.DayNight.DarkActionBar` without overriding `android:windowBackground`, so the default (white in day mode) showed through.
 
-### 4.1 ~~Add serialVersionUID to Serializable classes (interim fix)~~ DONE
+**Fix applied (code):**
+- Added `android:windowBackground=@android:color/black` to `Theme.Project01` in `res/values/themes.xml`.
+- Added `android:navigationBarColor=@android:color/black` to match — keeps the gesture-nav hint area consistent.
+- `BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE` is already set on the `WindowInsetsController` in `showGame()`. Root `activity_main.xml` already has `android:background=@color/app_background` (#FF0A1929, near-black) so it won't visibly clash on the few frames before the FrameLayout is laid out.
 
-~~`ObjectInputStream`/`ObjectOutputStream` is fragile: any field change breaks deserialization, and all Serializable classes lack `serialVersionUID`. A single model change between app versions will crash connected devices.~~
+**Files modified:** `res/values/themes.xml`
 
-**Changes (interim):**
-- ~~Add `serialVersionUID` to all Serializable classes as an interim fix~~
-- Full JSON migration (Moshi or kotlinx.serialization) deferred to a future iteration
-
-### 4.2 ~~Fix FileTransfer.sendFile() using inputStream.available()~~ DONE
-
-~~The `sendFile(Uri)` overload uses `inputStream.available()` to determine file size. For many content providers, `available()` returns only the buffered byte count, not the total size. This causes incorrect progress tracking or incomplete transfers.~~
-
-**Changes:**
-- ~~Query the actual file size from the ContentResolver using `OpenableColumns.SIZE`~~
-- ~~Fall back to `available()` only if the query returns null~~
-
-### 4.3 ~~Add connection health monitoring~~ DONE
-
-~~There is no reconnection logic, heartbeat, or stale connection detection. If a connection drops, it's silently gone.~~
-
-**Changes:**
-- ~~Added `Heartbeat` Serializable message class~~
-- ~~Added periodic heartbeat (every 15s) from server to clients~~
-- ~~Track last activity per client with `lastHeartbeat` map~~
-- ~~Emit `NetworkEvent.ClientDisconnected` when heartbeat times out (45s) or client disconnects~~
-- ~~Filter heartbeat messages from application-level events~~
-- ~~Surface disconnection to UI via toast~~
-
-### 4.4 ~~Make server port configurable~~ DONE
-
-~~Port 8888 is hardcoded in both `SocketNetworkManager` constructor and `GameViewModel.handleConnectionInfo()`. Multiple game sessions on the same network will conflict.~~
-
-**Changes:**
-- ~~Accept port as a constructor parameter in `SocketNetworkManager` (already had default parameter)~~
-- ~~Exposed `port` through `GameSync`~~
-- ~~`GameViewModel.handleConnectionInfo()` now reads `repository.gameSync.port` instead of hardcoded 8888~~
+**Status `◐` — pending device validation on a Samsung S9.** Move to `●` once confirmed on hardware.
 
 ---
 
-## Priority 5 — Error Handling & Logging ✅ DONE
+## M2 — Playback Experience
 
-### 5.1 ~~Replace e.printStackTrace() with proper logging~~ DONE
+### ● M2.1 ⚙️ Video must fill the entire screen
 
-~~All error handling uses `e.printStackTrace()`. These go to stderr and are invisible in production.~~
+**Symptom:** Letterbox / pillarbox depending on video aspect ratio vs. device screen. Black bars break the "anomaly" effect.
 
-**Changes:**
-- ~~Use `Log.e(TAG, message, exception)` consistently~~
-- ~~Define TAG constants in each class~~
-- ~~For errors the user should know about, propagate to the UI layer via LiveData or Flow events~~
+**Fix applied:** Added `app:resize_mode="zoom"` on the PlayerView in `activity_main.xml`. Preserves aspect ratio while cropping to fill — no bars.
 
-### 5.2 ~~Add error feedback to the UI~~ DONE
+**Files modified:** `res/layout/activity_main.xml`
 
-~~Network failures, file transfer errors, and connection drops are silent. The user has no visibility into what went wrong.~~
+### ● M2.2 🎯 Stop auto-advance — blue screen between videos
 
-**Changes:**
-- ~~NetworkEvent.Error surfaced as toast via `showToast()` in handleGameSyncEvent~~
-- ~~FileTransferEvent.Failure/Success surfaced as toasts in MainActivity observer~~
-- ~~File transfer progress shown via VideoAdapter progress bar~~
-- ~~Connection state changes (Host/Connected) shown via connectivityStatus indicator~~
+**Symptom:** Videos play in sequence automatically. Game master loses pacing control.
 
----
+**Root cause:** Deeper than the initial guess. `STATE_ENDED` fires only at the end of the *playlist*, not between items — the `playNextVideo` call there was a no-op for in-between transitions. The actual auto-advance came from ExoPlayer's default playlist behavior: `setMediaItems(...)` makes the player auto-transition between items.
 
-## Priority 6 — Permissions ✅ DONE
+**Fix applied:**
+- `exoPlayer.pauseAtEndOfMediaItems = true` in `initializePlayer()`. At the end of each item, ExoPlayer flips `playWhenReady` to `false` instead of advancing.
+- `onIsPlayingChanged(false)` hides the video surface, exposing the blue safe-screen background. The GM also broadcasts the pause state to all clients, who hide their surfaces too.
+- `gmNextButton` / `gmPreviousButton` (and the lobby `nextButton` / `previousButton`) now set `playWhenReady = true` after `seekToNext/Previous` so the new item actually plays — without this, the next item would load but stay paused.
+- Removed the no-op `onPlaybackStateChanged` STATE_ENDED → `playNextVideo` handler. Deleted the now-unused `playNextVideo()` function from `GameViewModel` and its 3 tests.
 
-### 6.1 ~~Handle runtime permissions explicitly~~ DONE
+The blue screen between videos is the natural "no anomaly" state in the game fiction — fits the narrative.
 
-~~`@SuppressLint("MissingPermission")` is applied at class level in `GameViewModel` and `MainActivity`, suppressing all permission warnings. No runtime permission checks exist for Bluetooth, Camera, or Location — the app crashes on Android 6+ if permissions are denied.~~
+**Files modified:** `MainActivity.kt`, `GameViewModel.kt`, `GameViewModelTest.kt`
 
-**Changes:**
-- ~~Removed class-level `@SuppressLint("MissingPermission")` from `GameViewModel`, `GameRepository`, and `MainActivity`~~
-- ~~Added `requirePermissions()` helper in MainActivity that checks and requests permissions before executing an action~~
-- ~~Added `ActivityResultContracts.RequestMultiplePermissions()` launcher with callback~~
-- ~~Grouped permissions by feature: Wi-Fi P2P (ACCESS_FINE_LOCATION + NEARBY_WIFI_DEVICES on API 33+), Bluetooth (BLUETOOTH_SCAN/CONNECT on API 31+)~~
-- ~~Wrapped Create Game and Join Game buttons with Wi-Fi P2P permission checks~~
-- ~~Kept method-level `@SuppressLint` on specific ViewModel methods with comments explaining permissions are checked at the Activity level~~
-
-### 6.2 ~~Replace deprecated onActivityResult~~ DONE
-
-~~`MainActivity.onActivityResult()` uses the deprecated API with a magic request code `1`.~~
-
-**Changes:**
-- ~~Replace with `registerForActivityResult(ActivityResultContracts.OpenDocument())` for the video picker~~
-- ~~Replace Bluetooth enable intent with `registerForActivityResult(ActivityResultContracts.StartActivityForResult())`~~
-- ~~Remove the magic request code constants and deprecated `onActivityResult` override~~
+**Test count: 116 → 113.**
 
 ---
 
-## Priority 7 — Test Coverage ✅ DONE
+## M3 — Undercover Game Master
 
-Current estimated coverage is ~5%. The most critical code paths have zero tests.
+Game master's UI must be visually indistinguishable from a player's. Current overlay is too conspicuous.
 
-### 7.1 ~~Add SocketNetworkManager tests~~ DONE
+### ● M3.1 ✨ Three-button game-session control surface
 
-~~The most complex and fragile class has zero tests.~~
+**Goal:** Reduce game-session controls to exactly three: **Previous**, **Play/Next**, **Light**.
 
-**Target test cases:**
-- ~~Server start and client connection handshake~~
-- ~~Broadcast delivery to multiple clients~~
-- ~~Client disconnection and cleanup~~
-- ~~Concurrent broadcast during client connect/disconnect~~
-- ~~Shutdown with active connections~~
-- ~~Error emission on connection failure~~
+**Fix applied:**
+- `GameViewModel.setLights(on: Boolean)` — single GM action that broadcasts both screen and torch commands together.
+- `gm_overlay` redesigned: three text-button glyphs (`‹` Previous, `▶` Play/Next, `○` Light) plus a smaller `•` glyph for the Playlist toggle. Removed `gm_play_pause_button`, `gm_screen_toggle_button`, `gm_torch_toggle_button`, `gm_add_video_button`, `gm_end_game_button`.
+- Play/Next is smart: if playing → pause (back to blue safe-screen); if paused at end of item → seek to next + play; if paused mid-item → play current.
+- Light is a single toggle: if both lights are on → turn both off (darkness mode); otherwise turn both on.
+- End Game moved to a **long-press gesture** on `invisible_resume_button` (the same target as the double-tap reveal). Same confirmation dialog as before, no visible button. Standard long-press timeout (~500ms) — acceptable since the dialog already protects against accidents.
 
-Added 4 tests: server accepts client connection, broadcast delivers message, shutdown closes server, broadcast delivers multiple messages in order.
+**Files modified:** `res/layout/activity_main.xml`, `MainActivity.kt`, `GameViewModel.kt`
 
-### 7.2 ~~Expand GameViewModel tests~~ DONE
+### ● M3.2 🎯 Make remaining buttons less conspicuous
 
-~~Currently only `turnOffScreen` and `deactivateTorch` are tested. Add tests for:~~
-- ~~`createGame` / `joinGame` — state transitions and password flow~~
-- ~~`addVideo` / `removeVideo` / `moveVideoUp` / `moveVideoDown` — list manipulation and bounds handling~~
-- ~~Network event handling — all branches of the `when (data)` dispatch~~
-- ~~`playNextVideo` / `onVideoSelected` — playback command emission~~
-- ~~Lifecycle methods — `onPause()`, `onCleared()` resource cleanup~~
+**Fix applied:**
+- Switched from `OutlinedButton` style to `TextButton` style — no border/outline, blends with the overlay background.
+- Glyph-only labels (`‹ ▶ ○ •`) — no English words to read at a glance.
+- `#80FFFFFF` text color (~50% white) for the three main buttons, `#50FFFFFF` (~31%) for the Playlist toggle.
+- Overlay background dimmed from `#DD000000` (87% black) to `#66000000` (40% black) — still readable but doesn't draw the eye.
+- Padding reduced from 12dp to 4dp; button height reduced from 44dp to 40dp main / 28dp Playlist; collapsed three rows into two.
 
-Expanded from 3 to 16 tests: isGameMaster default, playNextVideo (NEXT/PLAY_PAUSE/null), onVideoSelected, Error/ClientDisconnected event handling, PlaybackCommand/AdvancedCommand/PlaybackState data events, broadcastPlaybackState guard, onCleared cleanup.
+**Files modified:** `res/layout/activity_main.xml`
 
-### 7.3 ~~Expand GameRepository tests~~ DONE
-
-~~Currently only peer list conversion is tested. Add tests for:~~
-- ~~Initialization (channel creation, listener setup)~~
-- ~~`onPause()` / `onResume()` lifecycle behavior~~
-- ~~`shutdown()` cleanup (coroutine cancellation, Wi-Fi P2P cleanup)~~
-- ~~Connection info handling~~
-
-Existing GameRepositoryTest (1 test) covers peer list conversion. Repository lifecycle methods were moved to MainActivity (3.3), reducing the testable surface here.
-
-### 7.4 ~~Add FileTransfer edge case tests~~ DONE
-
-~~Currently one happy-path integration test. Add tests for:~~
-- ~~Empty file transfer~~
-- ~~Connection failure during transfer~~
-- ~~Progress event accuracy~~
-- ~~Socket closed mid-transfer~~
-
-Existing FileTransferTest (1 test) covers happy-path. Edge cases deferred — FileTransfer uses real sockets and ContentResolver making unit-level edge cases difficult without refactoring to injectable dependencies.
-
-### 7.5 ~~Test message serialization round-trips~~ DONE
-
-~~Zero tests exist for `PlaybackCommand`, `PlaybackState`, `AdvancedCommand`, `PasswordMessage`, `PasswordResponseMessage`, `FileTransferRequest`. Add serialization/deserialization round-trip tests for each, especially important before the JSON migration (Priority 4.1).~~
-
-Added 14 tests in SerializationTest: round-trip tests for PlaybackCommand (PLAY_PAUSE, NEXT, PREVIOUS), PlaybackState (with values, with zeros), AdvancedCommand (both types), PasswordMessage (with value, empty), PasswordResponseMessage (success, failure), FileTransferRequest, Heartbeat (with value, default).
+**Auto-hide on inactivity** was deferred — current overlay already requires a deliberate double-tap to reveal, and auto-hide adds state-machine complexity for marginal benefit.
 
 ---
 
-## Priority 8 — UI/UX Polish ✅ DONE
+## M4 — Bluetooth Remote (Presenter)
 
-### 8.1 ~~Add DiffUtil to RecyclerView adapters~~ DONE
+The three buttons from M3 must work from a Bluetooth presenter so the GM can control sessions hands-free / pocket-discreet.
 
-~~Both `PlayerAdapter` and `VideoAdapter` lack `DiffUtil.ItemCallback`. List updates trigger a full rebind of all ViewHolders.~~
+### ◐ M4.1 ✨ Bluetooth presenter event recognition
 
-**Changes:**
-- ~~Implemented `DiffUtil.ItemCallback` for `Player` (by deviceAddress) and `Video` (by uri)~~
-- ~~Converted both adapters to extend `ListAdapter` instead of `RecyclerView.Adapter`~~
-- ~~Updated MainActivity to use `submitList()` instead of setting property + `notifyDataSetChanged()`~~
+**Fix applied:** `MainActivity.dispatchKeyEvent()` overridden. When the GM is in an active session, presenter HID key codes are captured and routed to the same three action methods M3 introduced (`onGmPrevious`, `onGmPlayNext`, `onGmToggleLight`).
 
-### 8.2 ~~Fix VideoAdapter progressMap memory leak~~ DONE
+Key mappings:
 
-~~`VideoAdapter.progressMap` grows indefinitely — entries are never removed when videos are deleted from the playlist.~~
+| Key codes | Action |
+|---|---|
+| `KEYCODE_DPAD_RIGHT`, `KEYCODE_PAGE_DOWN`, `KEYCODE_MEDIA_NEXT` | Play / Next |
+| `KEYCODE_DPAD_LEFT`, `KEYCODE_PAGE_UP`, `KEYCODE_MEDIA_PREVIOUS` | Previous |
+| `KEYCODE_DPAD_CENTER`, `KEYCODE_SPACE`, `KEYCODE_ENTER`, `KEYCODE_F5`, `KEYCODE_MEDIA_PLAY_PAUSE` | Light toggle |
 
-**Changes:**
-- ~~Clear stale entries when the video list is updated via a custom setter that calls `retainAll` on progressMap keys~~
+The action runs on `ACTION_DOWN` (not on repeat), but both DOWN and UP are consumed so the OS doesn't double-act on the event. Volume keys are intentionally **not** mapped — they'd clash with the GM phone's own media volume during a session.
 
-### 8.3 ~~Migrate to ViewBinding~~ DONE
+The GM pairs the presenter via Android system settings; no in-app discovery / connect step is required. Android delivers HID events to the focused window automatically.
 
-~~`MainActivity` uses `findViewById()` throughout. ViewBinding provides compile-time safety and eliminates potential null/cast errors.~~
+**Files modified:** `MainActivity.kt`
 
-Enabled `viewBinding` in `build.gradle`, replaced all `findViewById()` calls with `binding.*` references, removed `lateinit var` field declarations for views.
+**Status `◐` — pending field test with a real presenter (Logitech R400 / generic Bluetooth clicker).**
 
-### 8.4 ~~Add missing android:exported to ConnectionService~~ DONE
+### ● M4.2 🎯 Single action handlers shared by touch + Bluetooth
 
-~~`AndroidManifest.xml` declares `<service android:name=".p2p.ConnectionService" />` without `android:exported`. Should be explicitly `android:exported="false"`.~~
+**Fix applied:** The three M3 action handlers (`onGmPrevious`, `onGmPlayNext`, `onGmToggleLight`) are now the single source of behavior for both touch buttons and HID keys. No duplicate logic — adding a new presenter key code is a one-line change.
 
----
+**SPP cleanup:** The legacy `BluetoothRemoteControl` SPP path was dead code (no UI entry, never called). With HID handling in place, it's superseded entirely. Deleted:
 
-## Priority 9 — Serialization Migration ✅ DONE
+- `session/BluetoothRemoteControl.kt`
+- `session/BluetoothDevicesDialogFragment.kt`
+- `res/layout/dialog_bluetooth_devices.xml`
+- `GameViewModel`: removed `bluetoothRemoteControl`, `_bluetoothDevices`, `bluetoothDevices`, `bluetoothReceiver`, `isBluetoothReceiverRegistered`, `startBluetoothDiscovery()`, `connectToBluetoothDevice()`, `handleRemoteControlMessage()`, `onPause()`. Trimmed unused imports.
+- `MainActivity`: removed `bluetoothPermissions()` helper (unused) and `gameViewModel.onPause()` call.
+- `AndroidManifest.xml`: dropped `BLUETOOTH_ADMIN`, `BLUETOOTH_SCAN`, `ACCESS_COARSE_LOCATION` — no longer needed without discovery. Kept `BLUETOOTH` and `BLUETOOTH_CONNECT` for the `ACTION_REQUEST_ENABLE` prompt.
 
-### 9.1 ~~Migrate from ObjectInputStream/ObjectOutputStream to JSON (kotlinx.serialization)~~ DONE
-
-~~`ObjectInputStream`/`ObjectOutputStream` is fragile: any field change, class rename, or package move breaks deserialization across connected devices running different app versions. The `serialVersionUID` approach (Priority 4.1) is a stopgap. This replaces the entire wire format with length-prefixed JSON using kotlinx.serialization, which is Kotlin-first, compile-time safe, and reflection-free.~~
-
-**Changes:**
-- ~~Add `org.jetbrains.kotlin.plugin.serialization` Gradle plugin (version matching Kotlin 1.9.22) and `kotlinx-serialization-json:1.6.2` dependency~~
-- ~~Create `GameMessage` sealed interface with `@Serializable` subtypes for all message types~~
-- ~~Create `MessageEnvelope` object with configured `Json` instance (`classDiscriminator = "msg_type"`) and utility functions: `encode(message: GameMessage): ByteArray` (serialize to JSON + 4-byte length prefix), `decode(bytes: ByteArray): GameMessage`, and `readFrom(input: DataInputStream): GameMessage`~~
-- ~~Create `VideoDto(uriString: String, title: String)` wrapper with `Video.toDto()` / `VideoDto.toVideo()` conversion functions, since `Video` uses Android `Uri` which is not directly serializable~~
-- ~~Rewrite `SocketNetworkManager`: replace `ObjectOutputStream`/`ObjectInputStream` with `OutputStream`/`DataInputStream`; use `MessageEnvelope.encode()`/`readFrom()` for wire format~~
-- ~~Change `NetworkManager.broadcast(data: Any)` → `broadcast(data: GameMessage)` — ripples through `GameSync`, `GameViewModel`, `TestNetworkManager`~~
-- ~~Change `NetworkEvent.DataReceived(val data: Any, ...)` → `DataReceived(val data: GameMessage, ...)` for compile-time type safety~~
-- ~~Update `GameViewModel.handleGameSyncEvent()`: `when(data)` matches on `GameMessage` subtypes; video list broadcast uses `VideoListMessage(videos.map { it.toDto() })`~~
-- ~~Add `@Serializable` and `@SerialName` to all message data classes and enums, remove `java.io.Serializable` and `serialVersionUID`~~
-- ~~Move `Heartbeat` into `GameMessage` hierarchy as `HeartbeatMsg`; `VideoListMessage` replaces raw `List<Video>` broadcast~~
-
-New files: `GameMessage.kt`, `MessageEnvelope.kt` (also contains `VideoDto`, `VideoListMessage`, `HeartbeatMsg`)
-
-SerializationTest expanded from 14 to 18 tests (added `VideoListMessage` round-trips, empty list, length prefix verification, type discriminator verification). SocketNetworkManagerTest, GameSyncTest, GameViewModelTest all updated for new types. All 44 tests pass.
-
----
-
-## Priority 10 — Reconnection Logic ✅ DONE
-
-### 10.1 ~~Add automatic client reconnection with exponential backoff~~ DONE
-
-~~Currently, when a TCP connection drops, `NetworkEvent.ClientDisconnected` is emitted and displayed as a toast, but nothing attempts to reconnect. The Wi-Fi Direct P2P group typically survives a TCP disconnect, so the TCP layer should attempt automatic reconnection.~~
-
-**Changes:**
-- ~~Create `ReconnectionManager` class encapsulating the reconnection state machine:~~
-  - ~~Constructor parameters: `networkManager: NetworkManager`, `scope: CoroutineScope`, `maxRetries: Int = 10`, `baseDelayMs: Long = 1000`, `maxDelayMs: Long = 30000`, `connectionTimeoutMs: Long = 10_000`~~
-  - ~~States (sealed class `ReconnectionState`): `Idle`, `Reconnecting(attempt: Int)`, `Connected`, `Failed`~~
-  - ~~Exposes `StateFlow<ReconnectionState>` for UI observation~~
-  - ~~`startReconnecting(host, port)` — launches coroutine loop with exponential backoff (`min(baseDelayMs * 2^attempt, maxDelayMs) + random(0..500)` jitter), calls `networkManager.connectTo()`, uses `CompletableDeferred` with `UNDISPATCHED` collect to listen for `ClientConnected`/`Error` events per attempt~~
-  - ~~`stopReconnecting()` — cancels reconnection coroutine, transitions to `Idle`~~
-- ~~Add `NetworkEvent.ClientConnected(val address: String)` — emitted in `SocketNetworkManager.handleClient()` after successful output stream creation~~
-- ~~Server-side in `SocketNetworkManager.startServer()`: when a reconnecting client connects from a known address, close the old dead socket before storing the new one~~
-- ~~`GameViewModel`:~~
-  - ~~Store connection parameters: `lastHost: String?`, `lastPort: Int?` — saved in `handleConnectionInfo()`~~
-  - ~~On `ClientDisconnected` event (client-side only, not game master): trigger `reconnectionManager.startReconnecting(lastHost, lastPort)`~~
-  - ~~Re-authentication happens automatically: server sends new `PasswordChallenge` on reconnect, client's stored `pendingPassword` triggers the hash response~~
-  - ~~Update `_connectivityStatus` to reflect states: `"Disconnected"`, `"Reconnecting (attempt N)..."`, `"Connected"`~~
-  - ~~Observe `ReconnectionManager.state` via `collectLatest` for status updates~~
-- ~~Expose `ReconnectionManager` through `GameSync` (with dedicated `CoroutineScope` for reconnection, cancelled in `shutdown()`)~~
-
-New files: `ReconnectionManager.kt`
-
-Files modified: `GameViewModel.kt`, `SocketNetworkManager.kt`, `NetworkEvent.kt`, `GameSync.kt`
-
-Tests: New `ReconnectionManagerTest.kt` (7 tests: initial state, success on first attempt, retry on error + success on second, max retries → Failed, stopReconnecting, exponential backoff computation, duplicate startReconnecting ignored). Updated `GameViewModelTest.kt` (+3 reconnection trigger tests, updated ClientDisconnected test). Updated `SocketNetworkManagerTest.kt` (+1 ClientConnected event test). Total tests: 72 (up from 61).
-
----
-
-## Priority 11 — Password Security ✅ DONE
-
-### 11.1 ~~Replace plaintext password with challenge-response hashing~~ DONE
-
-~~`PasswordMessage` currently sends the password as a plaintext string over TCP. While Wi-Fi Direct is a local network, any device in the P2P group can observe traffic. A challenge-response scheme prevents replay attacks and password exposure.~~
-
-**Protocol flow:**
-1. Client connects via TCP
-2. Server immediately sends `PasswordChallenge(nonce)` — nonce is 32-byte random, hex-encoded via `SecureRandom`
-3. Client receives challenge, computes `SHA-256(password + nonce)`, sends `PasswordMessage(passwordHash)`
-4. Server computes expected hash with stored nonce, compares, sends `PasswordResponseMessage(success)`
-5. Nonce is discarded (single-use, prevents replay)
-
-**Changes:**
-- ~~Create `PasswordChallenge` message type with `nonce: String` field~~
-- ~~Change `PasswordMessage.password: String` → `passwordHash: String`~~
-- ~~Create `PasswordHasher` utility object:~~
-  - ~~`generateNonce(): String` — 32-byte `SecureRandom`, hex-encoded~~
-  - ~~`hash(password: String, nonce: String): String` — `SHA-256(password + nonce)`, hex-encoded~~
-- ~~`SocketNetworkManager`: after accepting a client and creating the output stream, immediately send `PasswordChallenge(nonce)` to the new client; store nonce per client in `clientNonces: ConcurrentHashMap<String, String>`~~
-- ~~`GameViewModel` client side: add `PasswordChallenge` handler in `handleGameSyncEvent` — compute hash and send `PasswordMessage`; `joinGame()` stores password locally but does NOT send immediately, waits for challenge~~
-- ~~`GameViewModel` server side: in `handlePasswordMessage`, retrieve nonce for sender address, compute expected hash, compare, remove nonce after use~~
-- ~~Added `consumeNonce(address)` method to `NetworkManager` interface (with default null implementation) and `GameSync` facade for nonce retrieval from ViewModel~~
-- ~~Client-side handles both orderings: password entered before challenge arrives, and challenge received before password entered~~
-
-New files: `PasswordChallenge.kt`, `PasswordHasher.kt`
-
-Files modified: `PasswordMessage.kt`, `GameViewModel.kt`, `SocketNetworkManager.kt`, `NetworkManager.kt`, `GameSync.kt`
-
-No new dependencies — uses `java.security.MessageDigest` and `java.security.SecureRandom`.
-
-Tests: New `PasswordHasherTest.kt` (8 tests), updated `SerializationTest.kt` (+1 `PasswordChallenge` round-trip, updated `PasswordMessage` tests for `passwordHash` field), updated `GameViewModelTest.kt` (+6 challenge-response flow tests), updated `SocketNetworkManagerTest.kt` (+2 challenge/nonce tests). Total tests: 61 (up from 44).
-
----
-
-## Priority 12 — Battery and Doze Mode ✅ DONE
-
-### 12.1 ~~Convert ConnectionService to foreground service and handle power management~~ DONE
-
-~~`ConnectionService` is a background service with `PARTIAL_WAKE_LOCK` and `WIFI_MODE_FULL_HIGH_PERF`. On Android 8+ (API 26+), background services are killed after approximately one minute. Since `minSdk` is 24, there's a brief API 24-25 window where background services survive, but on all modern devices the service will be killed. Additionally, `WIFI_MODE_FULL_HIGH_PERF` is deprecated in API 34.~~
-
-**Changes:**
-- ~~Added `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_CONNECTED_DEVICE`, and `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` permissions to `AndroidManifest.xml`~~
-- ~~Updated service declaration with `android:foregroundServiceType="connectedDevice"`~~
-- ~~Rewrote `ConnectionService` as foreground service:~~
-  - ~~Creates notification channel (`game_connection`, low importance) on API 26+~~
-  - ~~Calls `startForeground()` with persistent "Game session active" notification~~
-  - ~~Uses `WIFI_MODE_FULL_LOW_LATENCY` on API 29+, `WIFI_MODE_FULL_HIGH_PERF` on older~~
-  - ~~Wake lock has 4-hour timeout~~
-  - ~~`onDestroy()` releases locks and calls `stopForeground(true)`~~
-- ~~`MainActivity`: starts service via `ContextCompat.startForegroundService()` when `isGameStarted` becomes true, stops when false; removed `stopService` from `onPause()` so the service persists across activity pauses~~
-
-**Files modified:** `ConnectionService.kt`, `AndroidManifest.xml`, `MainActivity.kt`
-
-**Tests:** New `ConnectionServiceTest.kt` (5 tests): startForeground called, notification channel created, START_STICKY return, constants validation, onDestroy cleanup. Total tests: 77 (up from 72).
-
----
-
-## Priority 13 — FileTransfer Hardening ✅ DONE
-
-### 13.1 ~~Add checksum validation, retry logic, and larger buffer~~ DONE
-
-~~The current `FileTransfer` makes a single attempt with no integrity verification and a 4096-byte buffer. For large video files over potentially unstable Wi-Fi Direct connections, this is insufficient.~~
-
-**Changes:**
-- ~~Increased buffer from `ByteArray(4096)` → `ByteArray(65536)` (64KB) in all transfer methods~~
-- ~~Header format: 8-byte file size + 32-byte SHA-256 checksum (written via `DataOutputStream`/`DataInputStream`)~~
-- ~~Sender: computes SHA-256 of entire file content before sending, includes in header~~
-- ~~Receiver: computes SHA-256 incrementally via `MessageDigest.update()` during receive loop; compares after completion; deletes corrupt output file on mismatch~~
-- ~~New methods `sendFileWithRetry()` / `startReceivingWithRetry()`: exponential backoff (`baseDelayMs * 2^attempt`), configurable max retries (default 3)~~
-- ~~New `FileTransferEvent` subtypes: `RetryAttempt(fileName, attempt, maxRetries)`, `ChecksumFailed(fileName)`~~
-- ~~`GameViewModel`: calls retry methods instead of single-attempt versions~~
-- ~~`MainActivity`: handles `RetryAttempt` and `ChecksumFailed` events with toast feedback~~
-
-**Files modified:** `FileTransfer.kt`, `GameViewModel.kt`, `MainActivity.kt`
-
-**Tests:** Updated `FileTransferTest.kt` (6 tests): send/receive round-trip, checksum validation, large file with 64KB buffer, buffer size constant, checksum size constant, max retries constant. Total tests: 82 (up from 77).
-
----
-
-## Priority 14 — Game State Snapshots ✅ DONE
-
-### 14.1 ~~Periodic game state snapshots for offline resilience~~ DONE
-
-If the game master device crashes, all players lose game state (video list, playback position, player list). This adds periodic local snapshots so players can resume in offline mode.
-
-**Phase 1 (initial scope — local snapshot save/restore, no game master promotion):**
-
-**Changes:**
-- Create `GameStateSnapshot` data class: `videoList: List<VideoDto>`, `currentVideoIndex: Int`, `playbackPosition: Long`, `isPlaying: Boolean`, `playerAddresses: List<String>`, `gameMasterAddress: String`, `timestamp: Long`
-- Create `SnapshotManager` class:
-  - `startPeriodicSnapshots(intervalMs: Long = 10_000, stateProvider: () -> GameStateSnapshot?)` — coroutine loop saving JSON to `game_state_snapshot.json`
-  - `saveSnapshot(snapshot)` / `loadSnapshot(): GameStateSnapshot?` / `clearSnapshot()`
-  - Uses `AtomicFile` (from `androidx.core`) for crash-safe writes
-- `GameViewModel`: start periodic snapshots after game setup via `snapshotManager.startPeriodicSnapshots { buildSnapshot() }`; `buildSnapshot()` collects current state from LiveData; game master broadcasts snapshot periodically so all devices have a copy; stop snapshots in `onCleared()`
-- `GameRepository`: expose `SnapshotManager` instance constructed with application context
-- `MainActivity`: on startup in `onCreate()`, check `snapshotManager.loadSnapshot()`; if recent (< 1 hour), show "Resume Game?" dialog to restore video list and playback position in offline mode
-
-**Phase 2 (future):** game master promotion — a player starts a TCP server, remaining players reconnect to the new master using snapshot state.
-
-**New files:** `GameStateSnapshot.kt`, `SnapshotManager.kt`
-
-**Files modified:** `GameViewModel.kt`, `GameRepository.kt`, `MainActivity.kt`
-
-**Dependencies:** kotlinx.serialization (from Priority 9) or Gson (`com.google.code.gson:gson:2.10.1`) as fallback
-
-**Tests:**
-- New `SnapshotManagerTest.kt` — save/load round-trip, `loadSnapshot()` returns null for missing file, returns null for corrupt file, `clearSnapshot()` deletes file, periodic timing via `TestCoroutineScheduler`
-- New `GameStateSnapshotTest.kt` — serialization round-trip with various states
-- Update `GameViewModelTest.kt` — `buildSnapshot()` captures current state correctly
-
----
-
-## Priority 15 — Persistent Error UI ✅ DONE
-
-### 15.1 ~~Replace toasts with categorized error display~~ DONE
-
-All errors are shown as `Toast.makeText(context, message, Toast.LENGTH_SHORT)` which disappears after ~2 seconds and cannot be interacted with. Users cannot retry failed operations.
-
-**Changes:**
-- Create `UiError` sealed class:
-  - `Recoverable(message: String, actionLabel: String, action: () -> Unit)` — retryable errors
-  - `Informational(message: String)` — transient notices
-  - `Critical(message: String, actionLabel: String, action: () -> Unit)` — persistent errors requiring action
-- Create `ConnectionStatus` enum: `DISCONNECTED`, `CONNECTING`, `CONNECTED`, `HOST`, `RECONNECTING`
-- `GameViewModel`:
-  - New `_uiError: MutableLiveData<UiError>` replacing most `repository.showToast()` calls
-  - New `_connectionState: MutableLiveData<ConnectionStatus>` replacing `_connectivityStatus: MutableLiveData<String>`
-  - Map events: `NetworkEvent.Error` → `UiError.Recoverable` with retry action; client-side `ClientDisconnected` → `UiError.Critical` with reconnect action; game-master `ClientDisconnected` → `UiError.Informational`; file transfer failure → `UiError.Recoverable` with retry action
-  - Keep `showToast()` only for transient success messages ("Discovery initiated", "Transfer complete")
-- Add persistent status banner to `activity_main.xml`: `MaterialCardView` at top with icon, message, retry button, dismiss button — `visibility=gone` by default
-- Enhance `connectivity_indicator`: colored states (green = Connected/Host, yellow = Reconnecting, red = Disconnected)
-- `MainActivity`:
-  - Observe `uiError`: `Recoverable` → `Snackbar.make().setAction().show()`, `Critical` → show persistent status banner, `Informational` → `Snackbar` auto-dismiss
-  - Observe `connectionState`: update indicator color and text
-  - Remove most `Toast.makeText()` calls, keep only for success confirmations
-- `VideoAdapter`: add error icon overlay on video items with failed transfers, tap-to-retry
-
-**New files:** `ui/ErrorDisplay.kt` (contains `UiError` sealed class and `ConnectionStatus` enum)
-
-**Files modified:** `GameViewModel.kt`, `MainActivity.kt`, `activity_main.xml`, `VideoAdapter.kt`
-
-**No new dependencies** — Snackbar available from existing `com.google.android.material:material:1.11.0`.
-
-**Tests:**
-- Update `GameViewModelTest.kt` — verify `NetworkEvent.Error` emits correct `UiError` type, `ClientDisconnected` maps correctly based on game master status, `ConnectionStatus` transitions
-
----
-
-## Recommended implementation order
-
-Priority 9 (serialization) should be done first — Priorities 10, 11, 13, 14 all add or modify message types, and it's far easier to add new `@Serializable` `GameMessage` subtypes than new `java.io.Serializable` classes.
-
-Priority 10 (reconnection) should come before Priority 15 (error UI) since reconnection states feed the connectivity indicator.
-
-Priorities 12, 13, 14 are independent of each other.
-
-**Recommended order:** 9 → 11 → 10 → 12 → 13 → 14 → 15 → 16 → 17 → 18
-
----
-
-## Priority 16 — Signing & Release Build ✅ DONE
-
-### 16.1 ~~Create release signing configuration~~ DONE
-
-There is no signing configuration. Release builds either use the debug keystore or fail outright.
-
-**Changes:**
-- Generate a release keystore: `keytool -genkey -v -keystore release-keystore.jks -keyalg RSA -keysize 2048 -validity 10000 -alias project01` — store securely outside the repository, never commit it
-- Add `signingConfigs` block to `app/build.gradle` reading credentials from `~/.gradle/gradle.properties` or environment variables (never hardcoded):
-  ```groovy
-  signingConfigs {
-      release {
-          storeFile file(RELEASE_STORE_FILE)
-          storePassword RELEASE_STORE_PASSWORD
-          keyAlias RELEASE_KEY_ALIAS
-          keyPassword RELEASE_KEY_PASSWORD
-      }
-  }
-  ```
-- Reference the signing config in the release build type: `signingConfig signingConfigs.release`
-- Add `.gitignore` entries for `*.jks`, `*.keystore`, and any local properties file containing passwords
-
-**Files modified:** `app/build.gradle`
-
-**New files:** `release-keystore.jks` (generated locally, NOT committed)
-
-### 16.2 ~~Create ProGuard/R8 rules file~~ DONE
-
-The release build type references `proguard-rules.pro` which does not exist. When `minifyEnabled` is set to `true` (see 16.3), the build will fail without it.
-
-**Changes:**
-- Create `app/proguard-rules.pro` with rules to keep:
-  - All `@Serializable` classes and their companion objects (if kotlinx.serialization has been added via Priority 9)
-  - All `@Parcelize` classes (`Player`, `Video`)
-  - All classes implementing `java.io.Serializable` (if serialization migration is incomplete) — specifically the enum classes `PlaybackCommandType` and `AdvancedCommandType` which are referenced by string in serialization
-  - ExoPlayer media3 classes — media3 AARs ship consumer ProGuard rules, but test the release build to verify no runtime `ClassNotFoundException` or reflection failures
-  - Wi-Fi P2P callback interfaces and `WifiP2pManager.ActionListener` anonymous implementations
-  - `android.net.wifi.p2p` classes accessed via `Intent.getParcelableExtra()`
-- Keep the rules file minimal — only add rules that are actually required, verify by building a release APK and testing the full game flow
-
-**New files:** `app/proguard-rules.pro`
-
-### 16.3 ~~Enable R8 code and resource shrinking~~ DONE
-
-`minifyEnabled` is currently `false`. All library code is included in the APK, even unused portions.
-
-**Changes:**
-- In `app/build.gradle` release build type, enable shrinking:
-  ```groovy
-  release {
-      signingConfig signingConfigs.release
-      minifyEnabled true
-      shrinkResources true
-      proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-  }
-  ```
-- Build a release APK (`assembleRelease`) and verify the full game flow works: create game, join game, video transfer, playback commands, advanced commands, Bluetooth
-- If any runtime failures occur, add targeted `-keep` rules to `proguard-rules.pro`
-
-**Files modified:** `app/build.gradle`
-
-### 16.4 ~~Add protocol version to TCP handshake~~ DONE
-
-The current `versionCode 1` / `versionName "1.0"` has no role in the network protocol. Devices running different app versions will silently exchange incompatible messages.
-
-**Changes:**
-- Define a `PROTOCOL_VERSION` constant in `SocketNetworkManager` (or in `MessageEnvelope` if Priority 9 is done)
-- Include the protocol version in the first message exchanged after TCP connection (before authentication) — either as a dedicated `HandshakeMessage(protocolVersion: Int)` or as a field in the existing `PasswordChallenge` (if Priority 11 is done)
-- On version mismatch, emit `NetworkEvent.Error` with a clear message ("Incompatible app version") and close the connection
-- Bump `PROTOCOL_VERSION` whenever the wire format changes
-
-**Files modified:** `SocketNetworkManager.kt` (or `MessageEnvelope.kt`), `GameViewModel.kt`
-
-**New files:** `HandshakeMessage.kt` (if not folded into existing messages)
-
----
-
-## Priority 17 — Accessibility ✅ DONE
-
-### 17.1 ~~Add content descriptions to all interactive elements~~ DONE
-
-None of the buttons or interactive views in the layouts have `android:contentDescription`. Accessibility services cannot announce their purpose.
-
-**Changes:**
-- `activity_main.xml`: add `android:contentDescription` to all buttons:
-  - `previous_button`: "Play previous video"
-  - `play_pause_button`: "Toggle play and pause"
-  - `next_button`: "Play next video"
-  - `add_video_button`: "Add a video to the playlist"
-  - `turn_off_screen_button`: "Turn off player screens"
-  - `deactivate_torch_button`: "Turn off player flashlights"
-  - `create_game_button`: "Create a new game session"
-  - `join_game_button`: "Join an existing game session"
-  - `invisible_resume_button`: "Resume game controls" (only meaningful for game master, but described for consistency)
-  - `black_overlay`: `android:importantForAccessibility="no"` (purely decorative)
-  - `connectivity_indicator`: "Connection status"
-  - `player_view`: "Video player"
-- `item_video.xml`: add descriptions to item buttons:
-  - `move_up_button`: "Move video up in playlist"
-  - `move_down_button`: "Move video down in playlist"
-  - `remove_button`: "Remove video from playlist"
-  - `progress_bar`: "File transfer progress"
-- `item_player.xml`: add description to `player_name`: dynamically set in adapter via `contentDescription = playerName`
-
-**Files modified:** `activity_main.xml`, `item_video.xml`, `item_player.xml`, `PlayerAdapter.kt`, `VideoAdapter.kt`
-
-### 17.2 ~~Ensure minimum touch target sizes~~ DONE
-
-RecyclerView item buttons (`move_up_button`, `move_down_button`, `remove_button` in `item_video.xml`) use `wrap_content` sizing and short text ("Up", "Down", "Remove"). On high-density screens, these may fall below the 48dp minimum recommended by WCAG and Material Design accessibility guidelines.
-
-**Changes:**
-- Set `android:minHeight="48dp"` and `android:minWidth="48dp"` on all buttons in `item_video.xml`
-- Verify all buttons in `activity_main.xml` meet 48dp minimum — standard `Button` widgets in Material Components theme typically meet this by default, but confirm with the Accessibility Scanner
-
-**Files modified:** `item_video.xml`
-
-### 17.3 ~~Verify and fix color contrast~~ DONE
-
-The app background is `@android:color/holo_blue_dark` (#ff0099cc) with white text on `connectivity_indicator`. WCAG AA requires a minimum 4.5:1 contrast ratio for normal text.
-
-**Changes:**
-- Measure contrast ratios for all text/background combinations in the app:
-  - White text on `holo_blue_dark` background
-  - Button text on default Material button backgrounds
-  - `video_title` and `player_name` text colors (inheriting theme defaults)
-- If any combination fails 4.5:1, adjust the background color or text color. Likely fix: replace `@android:color/holo_blue_dark` with a darker custom color (e.g., `#003366`) that maintains the blue theme while improving contrast
-- Define colors in `res/values/colors.xml` instead of using framework colors directly
-
-**Files modified:** `activity_main.xml`, `res/values/colors.xml` (create if not exists)
-
-### 17.4 ~~Add focus management for UI state transitions~~ DONE
-
-When the UI switches between lobby mode (`showLobby()`) and game mode (`showGame()`) in `MainActivity.kt`, no accessibility announcement is made. Users relying on accessibility services don't know the context changed.
-
-**Changes:**
-- In `showGame()`: call `binding.playerView.announceForAccessibility("Game started. Video player is active.")`
-- In `showLobby()`: call `binding.createGameButton.announceForAccessibility("Returned to lobby.")`
-- When `connectivityStatus` changes: call `binding.connectivityIndicator.announceForAccessibility(status)` so connection state changes are announced
-- Set `android:accessibilityLiveRegion="polite"` on `connectivity_indicator` in `activity_main.xml` so updates are announced automatically
-
-**Files modified:** `MainActivity.kt`, `activity_main.xml`
-
-### 17.5 ~~Add proper labels to dialog input fields~~ DONE
-
-The password `EditText` in `dialog_create_game.xml` and `dialog_join_game.xml` uses `android:hint` as the only label. While `hint` is announced by accessibility services, a dedicated label is better practice. Also, `dialog_create_game.xml` line 13 has a typo: `android.inputType` (dot) instead of `android:inputType` (colon), meaning the input type is silently ignored and the password is displayed as plain text.
-
-**Changes:**
-- Fix `dialog_create_game.xml` line 13: change `android.inputType="textPassword"` to `android:inputType="textPassword"`
-- Add `android:autofillHints="password"` to both password fields for autofill framework support
-- Add a `TextView` label above each `EditText` with `android:labelFor="@id/password"` for explicit association (or use `TextInputLayout` from Material Components which provides built-in label/hint accessibility)
-
-**Files modified:** `dialog_create_game.xml`, `dialog_join_game.xml`
-
----
-
-## Priority 18 — App Size Optimization ✅ DONE
-
-### 18.1 ~~Remove unused media3-session dependency~~ DONE
-
-`androidx.media3:media3-session:1.2.1` is included in `app/build.gradle` but there is no `MediaSession` usage anywhere in the codebase. The session library adds unnecessary code and resources.
-
-**Changes:**
-- Remove `implementation 'androidx.media3:media3-session:1.2.1'` from `app/build.gradle` dependencies
-- Build and run the app to verify no runtime `ClassNotFoundException` — `media3-exoplayer` and `media3-ui` are sufficient for the current ExoPlayer usage
-- Estimated savings: ~0.5-1 MB
-
-**Files modified:** `app/build.gradle`
-
-### 18.2 ~~Configure ABI splits for release builds~~ REVERTED
-
-ExoPlayer's core (`media3-exoplayer`) uses Android's built-in `MediaCodec` for hardware decoding and does not bundle significant per-architecture native libraries. ABI splits produced identically-sized APKs with no size savings, so this was reverted in favor of a single universal APK.
-
----
-
-## Recommended implementation order
-
-Priority 9 (serialization) should be done first — Priorities 10, 11, 13, 14 all add or modify message types, and it's far easier to add new `@Serializable` `GameMessage` subtypes than new `java.io.Serializable` classes.
-
-Priority 10 (reconnection) should come before Priority 15 (error UI) since reconnection states feed the connectivity indicator.
-
-Priorities 12, 13, 14 are independent of each other.
-
-Priorities 16, 17, 18 are independent of each other and of Priorities 9-15 (except 16.3 depends on 16.2, and 16.1 is a prerequisite for publishing release builds).
-
-**Recommended order:** 9 → 11 → 10 → 12 → 13 → 14 → 15 → 16 → 17 → 18
-
----
-
-## Priority 19 — Game Master In-Game Controls ✅ DONE
-
-### 19.1 ~~Game master controls overlay~~ DONE
-
-In game mode, the game master had no way to control playback, torch, screen, or end the game — all controls were hidden by `showGame()`.
-
-**Changes:**
-- Added semi-transparent overlay (`gm_overlay`) anchored to the bottom of the screen with: Previous/Play-Pause/Next, Screen On-Off toggle, Torch On-Off toggle, End Game button
-- Overlay is toggled by double-tapping the `invisible_resume_button` (only visible to game master)
-- Added `GestureDetector` in MainActivity for double-tap detection
-
-### 19.2 ~~End Game~~ DONE
-
-No way to cleanly end a game session. Players entered a reconnection loop when game master killed the app.
-
-**Changes:**
-- Added `EndGameMessage` (`@SerialName("end_game")`) to GameMessage hierarchy
-- `GameViewModel.endGame()`: broadcasts EndGameMessage, stops periodic sync, clears snapshot, resets state
-- Player-side `handleEndGame()`: sets game to stopped, shows `UiError.Informational("Game ended by host")`
-- End Game button shows confirmation AlertDialog before executing
-- Bumped `PROTOCOL_VERSION` to 2
-
-### 19.3 ~~Screen on/off toggle~~ DONE
-
-`TURN_OFF_SCREEN` showed a permanent black overlay with no way to remove it.
-
-**Changes:**
-- Added `TURN_ON_SCREEN` to `AdvancedCommandType` enum
-- `GameViewModel.turnOnScreen()`: broadcasts + applies locally
-- `MainActivity.handleAdvancedCommand()`: handles `TURN_ON_SCREEN` by hiding the black overlay
-- GM overlay button toggles between "Screen Off" and "Screen On" based on state
-
-### 19.4 ~~Torch on/off toggle~~ DONE
-
-Only `DEACTIVATE_TORCH` existed — no way to remotely turn on player flashlights (needed for woods narrative).
-
-**Changes:**
-- Added `ACTIVATE_TORCH` to `AdvancedCommandType` enum
-- `GameViewModel.activateTorch()`: broadcasts + applies locally
-- `MainActivity.handleAdvancedCommand()`: handles `ACTIVATE_TORCH` via `CameraManager.setTorchMode(true)`
-- Extracted `setTorchMode(enabled: Boolean)` helper in MainActivity
-- GM overlay button toggles between "Torch On" and "Torch Off" based on state
-
-**Files modified:** `AdvancedCommand.kt`, `MessageEnvelope.kt`, `GameViewModel.kt`, `MainActivity.kt`, `activity_main.xml`
-
-**Tests:** Updated SerializationTest (+3: TURN_ON_SCREEN, ACTIVATE_TORCH, EndGameMessage round-trips), updated GameViewModelTest (+4: turnOnScreen, activateTorch, endGame, receiving EndGameMessage). Total tests: 114+.
-
----
-
-## Priority 20 — Game Master Player Management ✅ DONE
-
-### 20.1 ~~Player list population for game master~~ DONE
-
-Game master's player list stayed empty because `discoverPeers()` was only called during the join flow, and TCP-connected clients were not added to the list.
-
-**Changes:**
-- `GameViewModel`: on `NetworkEvent.ClientConnected` (game master side), creates a `Player` from the client address and adds to the player list via `addConnectedPlayer(address)`
-- On `NetworkEvent.ClientDisconnected` (game master side), removes the player via `removeConnectedPlayer(address)`
-- `GameRepository.updatePlayers(players)` added for ViewModel to update the player list
-
-### 20.2 ~~Custom player names~~ DONE
-
-Players appeared as IP addresses on the game master's screen because `WifiP2pDevice.deviceName` was only available through P2P discovery (not TCP connections).
-
-**Changes:**
-- Added name field to `dialog_join_game.xml` (`TextInputLayout` with "Your Name" hint)
-- `JoinGameDialogFragment` now takes `(name: String, password: String) -> Unit` callback
-- `GameViewModel.joinGame(name, password)` stores the name locally
-- After successful password authentication, client broadcasts `PlayerNameMessage(name)` to the server
-- Added `PlayerNameMessage` (`@SerialName("player_name")`) to GameMessage hierarchy
-- `handlePlayerName()` on game master side updates the player's display name in the list
-
-**Files modified:** `JoinGameDialogFragment.kt`, `dialog_join_game.xml`, `GameViewModel.kt`, `MessageEnvelope.kt`, `MainActivity.kt`, `GameRepository.kt`
-
----
-
-## Priority 21 — Playback & Connectivity ✅ DONE
-
-### 21.1 ~~Periodic playback position sync~~ DONE
-
-Video playback could drift between devices since sync only happened on play/pause events, not during continuous playback.
-
-**Changes:**
-- Game master periodically broadcasts `PlaybackState` every 5 seconds during active playback
-- `applyPlaybackState()` now checks drift: only emits a seek command if video changed, drift > 2 seconds, or playback stopped — avoids unnecessary seeks during normal playback
-- `periodicSyncJob` is cancelled in `endGame()` and `onCleared()`
-- Added `PLAYBACK_SYNC_INTERVAL_MS = 5000` and `PLAYBACK_DRIFT_THRESHOLD_MS = 2000` constants to `GameViewModel.Companion`
-
-### 21.2 ~~Graceful Wi-Fi Direct failure handling~~ DONE
-
-`createGroup`, `discoverPeers`, and `connect` failures showed raw error codes as toasts. No retry was offered.
-
-**Changes:**
-- `createGame()`: sets `CONNECTING` state, on failure maps reason codes to human-readable messages (P2P_UNSUPPORTED, BUSY, ERROR), shows `UiError.Recoverable` with "Retry" action
-- `discoverPeers()`: failure shows `UiError.Recoverable` with "Retry"
-- `connectToPlayer()`: failure shows `UiError.Recoverable`
-
-### 21.3 ~~Runtime permissions for connectToPlayer~~ DONE
-
-`connectToPlayer()` was called from the player list tap handler without checking Wi-Fi P2P permissions first.
-
-**Changes:**
-- Wrapped `connectToPlayer()` call in `requirePermissions(wifiP2pPermissions())` in MainActivity's PlayerAdapter click listener
-
-### 21.4 ~~Lock orientation to portrait~~ DONE
-
-No orientation lock existed — rotating the phone during a game session would trigger a configuration change.
-
-**Changes:**
-- Added `android:screenOrientation="portrait"` to `MainActivity` in `AndroidManifest.xml`
+`initializeBluetooth()` survives and now only prompts the user to enable the Bluetooth radio so paired presenters can connect.
 
 **Files modified:** `GameViewModel.kt`, `MainActivity.kt`, `AndroidManifest.xml`
 
 ---
 
-## Priority 22 — Player Status & Readiness
+## M5 — Pre-Production (Playlist Preparation)
 
-### 22.1 ~~Video pre-caching readiness tracking~~ DONE
+Game master prepares playlists days or weeks before the session.
 
-The game master had no way to know whether players had received all video files before starting the game.
+### ● M5.1 ✨ Persistent playlists
 
-**Changes:**
-- Added `PlayerStatusMessage` (`@SerialName("player_status")`) containing `batteryLevel: Int` and `receivedVideos: List<String>`
-- Players periodically broadcast `PlayerStatusMessage` every 10 seconds via `startPeriodicStatusBroadcast()` (runs on `Dispatchers.Default` to avoid test interference)
-- `GameViewModel.onFileTransferSuccess(fileName)` tracks completed transfers in `receivedVideoFiles` set
-- `handlePlayerStatus()` on game master side updates each player's `readyVideoCount` and `totalVideoCount`
-- Extended `Player` data class with `batteryLevel`, `readyVideoCount`, `totalVideoCount` fields (default values for backward compat)
-- `PlayerAdapter` shows readiness indicator: green "Ready" when all videos received, orange "2/5" count when pending
-- `item_player.xml` updated with `video_ready_label` and `battery_label` TextViews
-- Cleanup: `periodicStatusJob` cancelled in `endGame()`, `handleEndGame()`, and `onCleared()`; `receivedVideoFiles` cleared on end game
+**Goal:** Save/load named playlists across app launches.
 
-### 22.2 ~~Battery indicators per player~~ DONE
+**Fix applied:**
 
-During multi-hour woods sessions, the game master needs to know which devices are running low on battery.
+- New `session/PlaylistStore.kt`: `savePlaylist(name, videos)`, `loadPlaylist(name)`, `listPlaylists()`, `deletePlaylist(name)`. Stores each playlist as JSON (`List<VideoDto>` serialized via existing kotlinx.serialization config) under `filesDir/playlists/<name>.json`. Underscore-prefixed names are reserved for internal slots and filtered from `listPlaylists()`.
+- `GameRepository` exposes a `playlistStore` instance alongside `snapshotManager`.
+- `GameViewModel.addVideo` / `removeVideo` / `moveVideoUp` / `moveVideoDown` route through a new `applyLocalVideoChange()` helper that auto-saves to the reserved `_last` slot on every mutation.
+- `GameViewModel.init` calls `restoreLastPlaylist()` — on app start, the user sees their most recent playlist instead of an empty list. Guarded against empty/null returns so it's a no-op on first run.
+- Public API: `savePlaylistAs(name)`, `loadNamedPlaylist(name)` (broadcasts to other devices if GM), `listSavedPlaylists()`, `deleteSavedPlaylist(name)`.
+- Lobby UI: two new buttons `Save List` / `Load List` in `button_bar`. Save → name prompt; Load → list dialog with tap-to-load and a "Delete…" neutral button that opens a second list for deletion.
 
-**Changes:**
-- Battery level read via `BatteryManager.BATTERY_PROPERTY_CAPACITY` in `getBatteryLevel()`
-- Included in `PlayerStatusMessage` alongside video readiness (piggybacks on the same periodic broadcast)
-- `PlayerAdapter` displays battery percentage with color coding: green (>30%), orange (16-30%), red (≤15%)
-- Battery indicator hidden for game master's own entry and players that haven't sent status yet (`batteryLevel == -1`)
+**URI persistence:** `MainActivity.openDocumentLauncher` already calls `contentResolver.takePersistableUriPermission(uri, FLAG_GRANT_READ_URI_PERMISSION)` at pick time (line 56), so stored URIs remain valid after restart. No change needed there.
 
-**Files modified:** `MessageEnvelope.kt`, `Player.kt`, `PlayerAdapter.kt`, `item_player.xml`, `GameViewModel.kt`, `MainActivity.kt`
+**Files added:** `session/PlaylistStore.kt`, `test/.../PlaylistStoreTest.kt`
 
-**Tests:** Added 2 serialization round-trip tests for `PlayerStatusMessage` (with videos, empty videos). All existing tests pass unchanged.
+**Files modified:** `GameRepository.kt`, `GameViewModel.kt`, `MainActivity.kt`, `activity_main.xml`, `GameViewModelTest.kt` (added `mockPlaylistStore`)
 
-### 22.3 Remote volume control
+**Tests:** 7 new `PlaylistStoreTest` cases — round-trip, missing playlist, sorted listing with underscore filtering, delete, blank-name rejection, path-separator rejection, hidden `_last` slot. Total tests: **120**.
 
-Add `AdvancedCommand` for volume level so game master can fade in/out audio at narrative moments.
+### ● M5.2 🎯 Lobby video player: removed
 
-### 22.4 Dark mode theme
+**Symptom:** Lobby video player was dysfunctional, the single `exoPlayer` instance was shared across lobby and game modes with no distinct preview code path.
 
-The app uses `DayNight` theme but no `values-night` override exists.
+**Fix applied:** Removed the lobby player surface entirely.
 
-### 22.5 Haptic feedback
+- Added `android:id="@+id/player_container"` to the wrapping `ConstraintLayout`.
+- `showLobby()` now hides `player_container`; `showGame()` shows it.
+- Deleted the `playback_controls` `LinearLayout` (Prev / Play-Pause / Next buttons that only made sense for a lobby preview) and the three click handlers.
+- The freed vertical space (weight 3 / 7) now goes to the playlist `lists_container` (which keeps its weight 4), so the playlist visibly stretches in lobby.
 
-Game master triggers phone vibrations on player devices via `AdvancedCommand` for immersive moments.
-
-### 22.6 Session logging
-
-Log events (who joined, when, playback timeline) for post-session review.
-
-### 22.7 QR code join
-
-Game master shows a QR code encoding group info + password instead of requiring Wi-Fi Direct discovery + manual password entry.
-
-### 22.8 Cue system / branching narrative
-
-Instead of a linear video playlist, let the game master define cue points and trigger specific videos on demand.
+**Files modified:** `MainActivity.kt`, `res/layout/activity_main.xml`
 
 ---
 
-## Explanations — Operational Items
+## Backlog (deferred, not currently scheduled)
 
-The following item is not tracked as an implementation task. It involves external service setup that falls outside the normal code change workflow.
+Carried from previous priority 22 — interesting but not blocking.
 
-### Crash Reporting (Firebase Crashlytics)
+- **Remote volume control** — `AdvancedCommand` for volume so GM can fade audio at narrative moments.
+- **Dark mode theme** — `values-night` override (DayNight theme already declared).
+- **Haptic feedback** — GM-triggered vibration via `AdvancedCommand` for immersive moments.
+- **Session logging** — record join times, playback timeline, etc. for post-session review.
+- **QR code join** — encode group info + password in a QR; replaces Wi-Fi Direct manual discovery + password entry.
+- **Cue system / branching narrative** — replace linear playlist with named cue points the GM triggers on demand.
 
-During a live game with 20 devices in a forest, `adb logcat` access is impractical. `Log.e()` output is invisible in production.
+---
 
-**What's needed:**
+## Recommended order
 
-1. **Firebase project setup:** Create a Firebase project, register the Android app (package `com.project01`), download `google-services.json` into `app/`.
+1. **M1** (blocker bugs) — must be done before next field test.
+2. **M2** (playback) — small, high-impact polish that affects every session.
+3. **M3** (undercover UI) — required for the game's premise to work.
+4. **M4** (Bluetooth) — pairs naturally with M3 (the 3 buttons land in both places).
+5. **M5** (persistent playlists) — quality-of-life for the GM, not required to run a session.
 
-2. **Gradle plugins** (project-level `build.gradle`):
-   ```groovy
-   id 'com.google.gms.google-services' version '4.4.0' apply false
-   id 'com.google.firebase.crashlytics' version '2.9.9' apply false
-   ```
+---
 
-3. **Gradle dependencies** (app-level `build.gradle`):
-   ```groovy
-   id 'com.google.gms.google-services'
-   id 'com.google.firebase.crashlytics'
+## Completed Work Archive
 
-   implementation platform('com.google.firebase:firebase-bom:32.7.0')
-   implementation 'com.google.firebase:firebase-crashlytics'
-   implementation 'com.google.firebase:firebase-analytics'
-   ```
+Priorities 1–22 (all done). Brief summary; see `git log` for detail.
 
-4. **Code integration:** Supplement `Log.e(TAG, message, e)` calls with `FirebaseCrashlytics.getInstance().recordException(e)`. The key locations: `SocketNetworkManager.kt` (connection/client errors), `FileTransfer.kt` (transfer failures), `GameViewModel.kt` (event handling errors).
+| # | Title | Outcome |
+|---|---|---|
+| 1 | Crash Fixes & Data Corruption | Concurrent map use, manifest typo, BroadcastReceiver unregister guard, bounds checks, camera ID guard, socket leak on null host. |
+| 2 | Resource Leaks & Lifecycle | observeForever leak, stream close, shutdown race, Bluetooth socket close, ExoPlayer double-init. |
+| 3 | Architecture Refactoring | God-class extraction, repository encapsulation, activity-lifecycle separation, dead code deletion. |
+| 4 | Robustness & Protocol | serialVersionUID (interim), `available()` fix, heartbeat health monitoring, configurable port. |
+| 5 | Error Handling & Logging | `Log.e` everywhere, UI surfacing of errors. |
+| 6 | Permissions | Explicit runtime permission flow, modern `ActivityResultContracts`. |
+| 7 | Test Coverage | 82 → 114+ tests across SocketNetworkManager, GameViewModel, GameRepository, FileTransfer, serialization. |
+| 8 | UI/UX Polish | DiffUtil, progressMap leak fix, ViewBinding, `exported` attr. |
+| 9 | Serialization Migration | `ObjectInputStream` → `kotlinx.serialization` JSON with `MessageEnvelope`. |
+| 10 | Reconnection Logic | `ReconnectionManager` with exponential backoff + jitter. |
+| 11 | Password Security | Challenge-response (nonce + SHA-256). |
+| 12 | Battery & Doze Mode | `ConnectionService` as foreground service. |
+| 13 | FileTransfer Hardening | SHA-256 checksum, retry, 64 KB buffer. |
+| 14 | Game State Snapshots | Periodic save + resume dialog. |
+| 15 | Persistent Error UI | `UiError` sealed class (Recoverable / Informational / Critical), `ConnectionStatus` enum. |
+| 16 | Signing & Release Build | Signing config, ProGuard rules, R8 enabled, `PROTOCOL_VERSION` handshake. |
+| 17 | Accessibility | Content descriptions, touch targets, contrast, focus management, dialog labels. |
+| 18 | App Size Optimization | Removed unused `media3-session` (ABI splits reverted — no savings). |
+| 19 | Game Master In-Game Controls | GM overlay (double-tap to reveal), `EndGameMessage`, screen on/off toggle, torch on/off toggle. |
+| 20 | Player Management | Player list population on TCP connect, custom player names. |
+| 21 | Playback & Connectivity | Periodic position sync, graceful Wi-Fi Direct failure handling, portrait lock. |
+| 22.1–22.2 | Player Status & Readiness | Battery + video-ready indicators per player. 22.3–22.8 deferred to Backlog above. |
 
-5. **Session context:** Set `FirebaseCrashlytics.getInstance().setCustomKey("role", "game_master")` or `"player"` for crash reports. Set `setUserId(deviceAddress)` for per-device tracking.
+### Operational (one-time, not tracked here)
 
-6. **Offline behavior:** Crashlytics queues reports and sends them when the device has internet connectivity. Since Wi-Fi Direct doesn't provide internet, reports upload the next time the device connects to regular Wi-Fi or cellular.
+- **Firebase Crashlytics** — Firebase project setup, `google-services.json`, Gradle plugins, `recordException()` integration. Outside normal code-change workflow; covered separately when ready.

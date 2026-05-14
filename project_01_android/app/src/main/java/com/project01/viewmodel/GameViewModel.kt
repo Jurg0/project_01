@@ -3,12 +3,8 @@ package com.project01.viewmodel
 import android.annotation.SuppressLint
 import android.app.Application
 import android.bluetooth.BluetoothAdapter
-import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
-import android.content.BroadcastReceiver
 import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
 import android.net.Uri
 import android.os.BatteryManager
 import android.os.Build
@@ -56,15 +52,10 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     private val _advancedCommand = MutableLiveData<AdvancedCommand>()
     val advancedCommand: LiveData<AdvancedCommand> = _advancedCommand
 
-    private val _bluetoothDevices = MutableLiveData<List<BluetoothDevice>>()
-    val bluetoothDevices: LiveData<List<BluetoothDevice>> = _bluetoothDevices
-
     private var player: Player? = null
     private var lastHost: String? = null
     private var lastPort: Int? = null
     private var bluetoothAdapter: BluetoothAdapter? = null
-    private var bluetoothRemoteControl: BluetoothRemoteControl? = null
-    private var isBluetoothReceiverRegistered = false
     private var currentVideoIndex = 0
     private var currentPlaybackPosition = 0L
     private var currentIsPlaying = false
@@ -80,28 +71,6 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         handleGameSyncEvent(event)
     }
 
-    private val bluetoothReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: android.content.Context, intent: Intent) {
-            when (intent.action) {
-                BluetoothDevice.ACTION_FOUND -> {
-                    val device: BluetoothDevice? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
-                    } else {
-                        @Suppress("DEPRECATION")
-                        intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
-                    }
-                    device?.let {
-                        val currentDevices = _bluetoothDevices.value?.toMutableList() ?: mutableListOf()
-                        if (!currentDevices.contains(it)) {
-                            currentDevices.add(it)
-                            _bluetoothDevices.postValue(currentDevices)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     private val _requestEnableBluetooth = MutableLiveData<Boolean>()
     val requestEnableBluetooth: LiveData<Boolean> = _requestEnableBluetooth
 
@@ -110,6 +79,38 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         repository.connectionInfo.observeForever(connectionInfoObserver)
         initializeBluetooth()
         observeReconnectionState()
+        restoreLastPlaylist()
+    }
+
+    private fun restoreLastPlaylist() {
+        if (videos.value?.isNotEmpty() == true) return
+        val saved = repository.playlistStore.loadPlaylist(PlaylistStore.LAST_USED_NAME)
+        if (saved.isNullOrEmpty()) return
+        repository.restoreVideos(saved)
+    }
+
+    // --- Named playlist API (M5.1) ---
+
+    fun savePlaylistAs(name: String) {
+        val current = videos.value ?: emptyList()
+        repository.playlistStore.savePlaylist(name, current)
+    }
+
+    fun loadNamedPlaylist(name: String) {
+        val loaded = repository.playlistStore.loadPlaylist(name) ?: return
+        viewModelScope.launch {
+            repository.restoreVideos(loaded)
+            repository.playlistStore.savePlaylist(PlaylistStore.LAST_USED_NAME, loaded)
+            if (isGameMaster()) {
+                repository.gameSync.broadcast(VideoListMessage(loaded.map { it.toDto() }))
+            }
+        }
+    }
+
+    fun listSavedPlaylists(): List<String> = repository.playlistStore.listPlaylists()
+
+    fun deleteSavedPlaylist(name: String) {
+        repository.playlistStore.deletePlaylist(name)
     }
 
     private fun observeReconnectionState() {
@@ -169,32 +170,14 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     }
 
     private fun initializeBluetooth() {
+        // We don't connect to or scan for Bluetooth devices ourselves — Bluetooth presenters
+        // pair via system settings and deliver HID key events directly to the foreground
+        // activity. We just prompt the user to enable the radio so paired remotes work.
         val bluetoothManager = getApplication<Application>().getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
         bluetoothAdapter = bluetoothManager?.adapter
-        if (bluetoothAdapter == null) {
-            // Device doesn't support Bluetooth
-        } else {
-            if (bluetoothAdapter?.isEnabled == false) {
-                _requestEnableBluetooth.postValue(true)
-            }
+        if (bluetoothAdapter?.isEnabled == false) {
+            _requestEnableBluetooth.postValue(true)
         }
-        bluetoothRemoteControl = BluetoothRemoteControl { message ->
-            handleRemoteControlMessage(message)
-        }
-    }
-
-    @SuppressLint("MissingPermission") // Permission checked in MainActivity before calling
-    fun startBluetoothDiscovery() {
-        getApplication<Application>().registerReceiver(
-            bluetoothReceiver,
-            IntentFilter(BluetoothDevice.ACTION_FOUND)
-        )
-        isBluetoothReceiverRegistered = true
-        bluetoothAdapter?.startDiscovery()
-    }
-
-    fun connectToBluetoothDevice(device: BluetoothDevice) {
-        bluetoothRemoteControl?.connect(device)
     }
 
     private fun handleGameSyncEvent(event: NetworkEvent) {
@@ -203,7 +186,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
                 val (data, address) = event.data to event.sender
                 when (data) {
                     is VideoListMessage -> handleVideoList(data.videos.map { it.toVideo() }, address)
-                    is FileTransferRequest -> handleFileTransferRequest(data)
+                    is FileTransferRequest -> handleFileTransferRequest(data, address)
                     is PlaybackCommand -> _playbackCommand.postValue(data)
                     is PlaybackState -> applyPlaybackState(data)
                     is AdvancedCommand -> _advancedCommand.postValue(data)
@@ -353,15 +336,23 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     }
 
     private fun handleEndGame() {
+        // isEndingGame stays true until the next createGame/joinGame restores it via
+        // handleConnectionInfo. Resetting it here races the ClientDisconnected event
+        // that fires when the GM tears down the group, which would otherwise re-enter
+        // the reconnect loop.
         isEndingGame = true
+        repository.gameSync.reconnectionManager.stopReconnecting()
         periodicStatusJob?.cancel()
         receivedVideoFiles.clear()
-        repository.setGameStarted(false)
         repository.snapshotManager.clearSnapshot()
+        repository.restoreVideos(emptyList())
+        repository.updatePlayers(emptyList())
         player = null
+        lastHost = null
+        lastPort = null
         _connectionState.postValue(ConnectionStatus.DISCONNECTED)
         _uiError.postValue(UiError.Informational("Game ended by host"))
-        isEndingGame = false
+        repository.setGameStarted(false)
     }
 
     private fun handlePasswordResponseMessage(message: PasswordResponseMessage) {
@@ -386,21 +377,16 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         }
     }
 
-    private fun handleFileTransferRequest(request: FileTransferRequest) {
-        if (thisDevice.value?.deviceAddress == request.targetAddress) {
-            if (isGameMaster()) {
-                val video = videos.value?.find { it.title == request.fileName }
-                if (video != null) {
-                    viewModelScope.launch {
-                        repository.fileTransfer.sendFileWithRetry(request.senderAddress, request.port, video.uri, getApplication<Application>().contentResolver)
-                    }
-                }
-            } else {
-                val outputFile = File(getApplication<Application>().filesDir, request.fileName)
-                viewModelScope.launch {
-                    repository.fileTransfer.startReceivingWithRetry(request.port, outputFile)
-                }
-            }
+    private fun handleFileTransferRequest(request: FileTransferRequest, fromIp: String) {
+        if (!isGameMaster()) return
+        val video = videos.value?.find { it.title == request.fileName } ?: return
+        viewModelScope.launch {
+            repository.fileTransfer.sendFileWithRetry(
+                fromIp,
+                request.port,
+                video.uri,
+                getApplication<Application>().contentResolver
+            )
         }
     }
 
@@ -491,9 +477,15 @@ class GameViewModel(application: Application, val repository: GameRepository = G
             val video = Video(uri, fileName)
             val currentVideos = videos.value?.toMutableList() ?: mutableListOf()
             currentVideos.add(video)
-            repository.restoreVideos(currentVideos)
-            repository.gameSync.broadcast(VideoListMessage(currentVideos.map { it.toDto() }))
+            applyLocalVideoChange(currentVideos)
         }
+    }
+
+    /** Apply a local (user-driven) playlist change: store in-memory, auto-save, broadcast. */
+    private suspend fun applyLocalVideoChange(newList: List<Video>) {
+        repository.restoreVideos(newList)
+        repository.playlistStore.savePlaylist(PlaylistStore.LAST_USED_NAME, newList)
+        repository.gameSync.broadcast(VideoListMessage(newList.map { it.toDto() }))
     }
 
     fun turnOffScreen() {
@@ -528,21 +520,36 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         }
     }
 
+    fun setLights(on: Boolean) {
+        if (on) {
+            turnOnScreen()
+            activateTorch()
+        } else {
+            turnOffScreen()
+            deactivateTorch()
+        }
+    }
+
     @SuppressLint("MissingPermission") // Permission checked in MainActivity before calling
     fun endGame() {
+        // isEndingGame stays true until the next createGame/joinGame restores it via
+        // handleConnectionInfo. See handleEndGame() for rationale.
         isEndingGame = true
         viewModelScope.launch {
             repository.gameSync.broadcast(EndGameMessage())
+            repository.gameSync.reconnectionManager.stopReconnecting()
             periodicSyncJob?.cancel()
             periodicStatusJob?.cancel()
             repository.snapshotManager.clearSnapshot()
+            repository.updatePlayers(emptyList())
             player = null
+            lastHost = null
+            lastPort = null
             _connectionState.postValue(ConnectionStatus.DISCONNECTED)
             repository.setGameStarted(false)
             try {
                 repository.wifiP2pManager.removeGroup(repository.channel, null)
             } catch (_: Exception) {}
-            isEndingGame = false
         }
     }
 
@@ -556,8 +563,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
             if (position in 1..currentVideos.lastIndex) {
                 val video = currentVideos.removeAt(position)
                 currentVideos.add(position - 1, video)
-                repository.restoreVideos(currentVideos)
-                repository.gameSync.broadcast(VideoListMessage(currentVideos.map { it.toDto() }))
+                applyLocalVideoChange(currentVideos)
             }
         }
     }
@@ -568,8 +574,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
             if (position in 0 until currentVideos.lastIndex) {
                 val video = currentVideos.removeAt(position)
                 currentVideos.add(position + 1, video)
-                repository.restoreVideos(currentVideos)
-                repository.gameSync.broadcast(VideoListMessage(currentVideos.map { it.toDto() }))
+                applyLocalVideoChange(currentVideos)
             }
         }
     }
@@ -579,18 +584,8 @@ class GameViewModel(application: Application, val repository: GameRepository = G
             val currentVideos = videos.value?.toMutableList() ?: return@launch
             if (position in currentVideos.indices) {
                 currentVideos.removeAt(position)
-                repository.restoreVideos(currentVideos)
-                repository.gameSync.broadcast(VideoListMessage(currentVideos.map { it.toDto() }))
+                applyLocalVideoChange(currentVideos)
             }
-        }
-    }
-
-    fun playNextVideo(currentVideoIndex: Int) {
-        val videos = videos.value ?: return
-        if (currentVideoIndex < videos.size - 1) {
-            _playbackCommand.postValue(PlaybackCommand(PlaybackCommandType.NEXT))
-        } else {
-            _playbackCommand.postValue(PlaybackCommand(PlaybackCommandType.PLAY_PAUSE))
         }
     }
 
@@ -600,14 +595,6 @@ class GameViewModel(application: Application, val repository: GameRepository = G
             _playbackCommand.postValue(PlaybackCommand(PlaybackCommandType.PLAY_PAUSE, videoIndex))
         }
     }
-
-    private fun handleRemoteControlMessage(message: String) {
-        when (message) {
-            "next" -> _playbackCommand.postValue(PlaybackCommand(PlaybackCommandType.NEXT))
-            "previous" -> _playbackCommand.postValue(PlaybackCommand(PlaybackCommandType.PREVIOUS))
-        }
-    }
-
 
     fun broadcastPlaybackState(position: Long, isPlaying: Boolean, videoIndex: Int) {
         currentVideoIndex = videoIndex
@@ -639,13 +626,15 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     ) {
         viewModelScope.launch {
             val port = repository.findFreePort()
+            val outputFile = File(getApplication<Application>().filesDir, fileName)
+            // Start the receive listener first so the ServerSocket is bound (or
+            // about to bind) when the GM tries to connect back. sendFileWithRetry's
+            // exponential backoff covers any residual race.
+            launch {
+                repository.fileTransfer.startReceivingWithRetry(port, outputFile)
+            }
             repository.gameSync.broadcast(
-                FileTransferRequest(
-                    fileName,
-                    port,
-                    senderAddress,
-                    targetAddress
-                )
+                FileTransferRequest(fileName, port, senderAddress, targetAddress)
             )
         }
     }
@@ -714,13 +703,6 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         val port = lastPort
         if (host != null && port != null) {
             repository.gameSync.reconnectionManager.startReconnecting(host, port)
-        }
-    }
-
-    fun onPause() {
-        if (isBluetoothReceiverRegistered) {
-            getApplication<Application>().unregisterReceiver(bluetoothReceiver)
-            isBluetoothReceiverRegistered = false
         }
     }
 

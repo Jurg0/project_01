@@ -11,6 +11,10 @@
         <item name="colorOnSecondary">@color/black</item>
         <!-- Status bar color. -->
         <item name="android:statusBarColor">?attr/colorPrimaryVariant</item>
+        <!-- Black window/nav background so immersive mode and Samsung gesture-nav
+             hint bar don't expose a white strip behind the app content. -->
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:navigationBarColor">@android:color/black</item>
         <!-- Customize your theme here. -->
     </style>
 </resources>

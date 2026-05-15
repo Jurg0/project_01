@@ -22,7 +22,17 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.withContext
 import java.io.IOException
 
-class GameRepository(private val application: Application) {
+class GameRepository(
+    private val application: Application,
+    val gameSync: GameSync = GameSync(SocketNetworkManager()),
+    val fileTransfer: FileTransfer = FileTransfer(),
+    val snapshotManager: SnapshotManager = SnapshotManager(
+        java.io.File(application.filesDir, "game_state_snapshot.json")
+    ),
+    val playlistStore: PlaylistStore = PlaylistStore(
+        java.io.File(application.filesDir, "playlists")
+    ),
+) {
 
     private val _players = MutableLiveData<List<Player>>()
     val players: LiveData<List<Player>> = _players
@@ -61,10 +71,7 @@ class GameRepository(private val application: Application) {
             .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
         application.startActivity(intent)
     }
-    val gameSync = GameSync(SocketNetworkManager())
-    val fileTransfer = FileTransfer()
-    val snapshotManager = SnapshotManager(java.io.File(application.filesDir, "game_state_snapshot.json"))
-    val playlistStore = PlaylistStore(java.io.File(application.filesDir, "playlists"))
+
     private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     val intentFilter = IntentFilter().apply {

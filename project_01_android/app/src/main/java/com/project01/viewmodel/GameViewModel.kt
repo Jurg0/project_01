@@ -672,14 +672,28 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         }
     }
 
+    /**
+     * Called from the Player.Listener on isPlaying transitions. Records local
+     * state; broadcasts only if the transition is **not** the immediate
+     * after-effect of an explicit commandPlayback (which already sent the
+     * authoritative command). Within the grace window the listener stays
+     * quiet, so we don't double-broadcast on every Prev / Play-Next press.
+     *
+     * Broadcasts via PlaybackCommand (not PlaybackState) so the client's
+     * drift filter can't drop the message — natural end-of-video pauses
+     * propagate immediately.
+     */
     fun broadcastPlaybackState(position: Long, isPlaying: Boolean, videoIndex: Int) {
         currentVideoIndex = videoIndex
         currentPlaybackPosition = position
         currentIsPlaying = isPlaying
-        if (isGameMaster()) {
-            viewModelScope.launch {
-                repository.gameSync.broadcast(PlaybackState(videoIndex, position, isPlaying))
-            }
+        if (!isGameMaster()) return
+        val sinceExplicit = System.currentTimeMillis() - lastCommandPlaybackAtMs
+        if (sinceExplicit < COMMAND_GRACE_MS) return
+        viewModelScope.launch {
+            repository.gameSync.broadcast(
+                PlaybackCommand(PlaybackCommandType.PLAY_PAUSE, videoIndex, position, isPlaying)
+            )
         }
     }
 
@@ -688,11 +702,16 @@ class GameViewModel(application: Application, val repository: GameRepository = G
      * so the client seeks unconditionally — unlike PlaybackState, which the
      * client filters through a drift threshold and may silently drop when the
      * new position is close to its last-seen one.
+     *
+     * Also stamps `lastCommandPlaybackAtMs` so the Player.Listener (which
+     * fires shortly after we set playWhenReady on ExoPlayer with mid-seek
+     * state) doesn't race this authoritative broadcast on the wire.
      */
     fun commandPlayback(videoIndex: Int, position: Long, playWhenReady: Boolean) {
         currentVideoIndex = videoIndex
         currentPlaybackPosition = position
         currentIsPlaying = playWhenReady
+        lastCommandPlaybackAtMs = System.currentTimeMillis()
         if (isGameMaster()) {
             viewModelScope.launch {
                 repository.gameSync.broadcast(
@@ -701,6 +720,8 @@ class GameViewModel(application: Application, val repository: GameRepository = G
             }
         }
     }
+
+    private var lastCommandPlaybackAtMs = 0L
 
     private fun applyPlaybackState(state: PlaybackState) {
         val drift = Math.abs(state.playbackPosition - currentPlaybackPosition)
@@ -793,6 +814,10 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         const val PLAYBACK_DRIFT_THRESHOLD_MS = 2_000L
         const val STATUS_BROADCAST_INTERVAL_MS = 10_000L
         const val END_GAME_DRAIN_MS = 500L
+        /** Window after an explicit commandPlayback during which listener-driven
+         *  broadcasts stay quiet. Covers the Player.Listener fires triggered by
+         *  the seek + playWhenReady set we just did. */
+        const val COMMAND_GRACE_MS = 500L
 
         val Factory: ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")

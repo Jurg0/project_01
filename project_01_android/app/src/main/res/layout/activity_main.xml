@@ -14,7 +14,7 @@
         android:layout_height="match_parent"
         android:orientation="vertical">
 
-        <!-- Video player. Hidden in lobby (M5.2) — only shown during an active session. -->
+        <!-- Video player. Hidden in lobby — only shown during an active session. -->
         <androidx.constraintlayout.widget.ConstraintLayout
             android:id="@+id/player_container"
             android:layout_width="match_parent"
@@ -147,7 +147,7 @@
                     android:textSize="12sp" />
             </LinearLayout>
 
-            <!-- Saved playlists row (M5.1) -->
+            <!-- Saved playlists row -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -232,11 +232,15 @@
         android:importantForAccessibility="no"
         android:visibility="gone" />
 
-    <!-- Invisible full-screen tap target for game master (double-tap toggles controls) -->
+    <!-- Invisible tap target for game master (double-tap toggles GM controls,
+         long-press confirms End Game). Sized to a ~20mm-radius patch in the centre
+         of the screen so the GM has to deliberately reach the middle — accidental
+         long-presses elsewhere don't end the session. -->
     <View
         android:id="@+id/invisible_resume_button"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
+        android:layout_width="40mm"
+        android:layout_height="40mm"
+        android:layout_gravity="center"
         android:background="@android:color/transparent"
         android:contentDescription="Double-tap for game controls"
         android:visibility="gone" />

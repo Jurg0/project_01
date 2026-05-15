@@ -89,7 +89,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         repository.restoreVideos(saved)
     }
 
-    // --- Named playlist API (M5.1) ---
+    // --- Named playlist API ---
 
     fun savePlaylistAs(name: String) {
         val current = videos.value ?: emptyList()
@@ -401,14 +401,30 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     }
 
     private fun handleVideoList(newVideos: List<Video>, senderAddress: String) {
-        repository.restoreVideos(newVideos)
-        if (!isGameMaster()) {
-            newVideos.forEach { video ->
-                thisDevice.value?.let {
-                    requestFileTransfer(video.title, it.deviceAddress, senderAddress)
+        if (isGameMaster()) {
+            repository.restoreVideos(newVideos)
+            return
+        }
+        // For each title: if the file already lives in filesDir (transferred
+        // earlier in this session, or left over from a prior session), use the
+        // local URI directly. Otherwise ask the GM to send it. This skips the
+        // redundant redownload that would otherwise happen every time the GM
+        // re-broadcasts the playlist (e.g. on every new joiner via
+        // pushInitialStateTo).
+        val thisAddress = thisDevice.value?.deviceAddress
+        val resolved = newVideos.map { video ->
+            val localFile = File(getApplication<Application>().filesDir, video.title)
+            if (localFile.exists()) {
+                receivedVideoFiles.add(video.title)
+                Video(Uri.fromFile(localFile), video.title)
+            } else {
+                if (thisAddress != null) {
+                    requestFileTransfer(video.title, thisAddress, senderAddress)
                 }
+                video
             }
         }
+        repository.restoreVideos(resolved)
     }
 
     private fun handleFileTransferRequest(request: FileTransferRequest, fromIp: String) {
@@ -667,6 +683,25 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         }
     }
 
+    /**
+     * Explicit GM playback action (Prev / Play / Next). Sends a PlaybackCommand
+     * so the client seeks unconditionally — unlike PlaybackState, which the
+     * client filters through a drift threshold and may silently drop when the
+     * new position is close to its last-seen one.
+     */
+    fun commandPlayback(videoIndex: Int, position: Long, playWhenReady: Boolean) {
+        currentVideoIndex = videoIndex
+        currentPlaybackPosition = position
+        currentIsPlaying = playWhenReady
+        if (isGameMaster()) {
+            viewModelScope.launch {
+                repository.gameSync.broadcast(
+                    PlaybackCommand(PlaybackCommandType.PLAY_PAUSE, videoIndex, position, playWhenReady)
+                )
+            }
+        }
+    }
+
     private fun applyPlaybackState(state: PlaybackState) {
         val drift = Math.abs(state.playbackPosition - currentPlaybackPosition)
         val videoChanged = state.videoIndex != currentVideoIndex
@@ -680,7 +715,10 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         if (playingChanged) {
             _showVideo.postValue(state.playWhenReady)
         }
-        if (videoChanged || drift > PLAYBACK_DRIFT_THRESHOLD_MS || !state.playWhenReady) {
+        // Act on play/pause transitions even when drift is small, otherwise a
+        // GM resume from a paused-on-blue state at the same position leaves the
+        // client's surface visible but its ExoPlayer still paused.
+        if (videoChanged || drift > PLAYBACK_DRIFT_THRESHOLD_MS || playingChanged) {
             _playbackCommand.postValue(PlaybackCommand(PlaybackCommandType.PLAY_PAUSE, state.videoIndex, state.playbackPosition, state.playWhenReady))
         }
     }

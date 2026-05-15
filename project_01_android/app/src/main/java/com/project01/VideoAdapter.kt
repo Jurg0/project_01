@@ -13,7 +13,8 @@ import androidx.recyclerview.widget.RecyclerView
 import com.project01.session.Video
 
 class VideoAdapter(
-    var isGameMaster: Boolean,
+    /** When true, each row shows move-up / move-down / delete buttons. Lobby-only. */
+    var editable: Boolean,
     private val onMoveUp: (Int) -> Unit,
     private val onMoveDown: (Int) -> Unit,
     private val onRemove: (Int) -> Unit,
@@ -36,7 +37,7 @@ class VideoAdapter(
 
     override fun onBindViewHolder(holder: VideoViewHolder, position: Int) {
         val video = getItem(position)
-        holder.bind(video, position, isGameMaster, onMoveUp, onMoveDown, onRemove, onVideoSelected)
+        holder.bind(video, position, editable, onMoveUp, onMoveDown, onRemove, onVideoSelected)
         val progress = progressMap[video.title] ?: 0
         holder.updateProgress(progress)
         holder.updateFailedState(video.title in failedTransfers)
@@ -70,7 +71,7 @@ class VideoAdapter(
         fun bind(
             video: Video,
             position: Int,
-            isGameMaster: Boolean,
+            editable: Boolean,
             onMoveUp: (Int) -> Unit,
             onMoveDown: (Int) -> Unit,
             onRemove: (Int) -> Unit,
@@ -79,7 +80,7 @@ class VideoAdapter(
             videoTitle.text = video.title
             itemView.setOnClickListener { onVideoSelected(video) }
 
-            if (isGameMaster) {
+            if (editable) {
                 moveUpButton.visibility = View.VISIBLE
                 moveDownButton.visibility = View.VISIBLE
                 removeButton.visibility = View.VISIBLE

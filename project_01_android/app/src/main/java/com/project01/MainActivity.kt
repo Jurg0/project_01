@@ -204,7 +204,7 @@ class MainActivity : AppCompatActivity() {
         player.seekTo(targetIndex, 0)
         player.playWhenReady = true
         binding.playerView.videoSurfaceView?.visibility = View.VISIBLE
-        gameViewModel.broadcastPlaybackState(0, true, targetIndex)
+        gameViewModel.commandPlayback(targetIndex, 0, true)
     }
 
     private fun onGmPlayNext() {
@@ -218,7 +218,7 @@ class MainActivity : AppCompatActivity() {
             val nextIndex = (currentIndex + 1).coerceAtMost(count - 1)
             player.seekTo(nextIndex, 0)
             player.playWhenReady = false
-            gameViewModel.broadcastPlaybackState(0, false, nextIndex)
+            gameViewModel.commandPlayback(nextIndex, 0, false)
         } else {
             // Paused on blue → start playing. If we're parked at the end of the
             // current item (pauseAtEndOfMediaItems), advance to the next one first.
@@ -229,7 +229,7 @@ class MainActivity : AppCompatActivity() {
             player.seekTo(targetIndex, targetPosition)
             player.playWhenReady = true
             binding.playerView.videoSurfaceView?.visibility = View.VISIBLE
-            gameViewModel.broadcastPlaybackState(targetPosition, true, targetIndex)
+            gameViewModel.commandPlayback(targetIndex, targetPosition, true)
         }
     }
 
@@ -243,8 +243,8 @@ class MainActivity : AppCompatActivity() {
     /**
      * Bluetooth presenters expose themselves as HID keyboards. Android delivers their key
      * events to the focused window — so the GM just needs to pair the remote in system
-     * settings and the events land here. We map the common presenter keys to the three
-     * GM actions defined in M3.
+     * settings and the events land here. We map the common presenter keys to the GM's
+     * Prev / Play-Next / Light actions.
      *
      * Volume keys are intentionally NOT mapped. They'd conflict with the GM phone's own
      * media volume during a session.
@@ -606,7 +606,7 @@ class MainActivity : AppCompatActivity() {
     private fun showLobby() {
         // In the lobby nobody has a role yet — show playlist edit controls so the
         // user can prepare a playlist for the next session (host or guest).
-        videoAdapter.isGameMaster = true
+        videoAdapter.editable = true
         videoAdapter.notifyDataSetChanged()
 
         binding.errorBanner.visibility = View.GONE
@@ -639,7 +639,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun showGame() {
         val isGameMaster = gameViewModel.isGameMaster()
-        videoAdapter.isGameMaster = isGameMaster
+        // Playlist edits (move up/down/delete) are lobby-only — during a session
+        // the GM can toggle the playlist visible to monitor connection/battery
+        // status, but the edit controls stay hidden.
+        videoAdapter.editable = false
         videoAdapter.notifyDataSetChanged()
 
         // Hide lobby UI, show full-screen player

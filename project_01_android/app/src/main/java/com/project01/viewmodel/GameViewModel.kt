@@ -257,8 +257,30 @@ class GameViewModel(application: Application, val repository: GameRepository = G
             }
             viewModelScope.launch {
                 repository.gameSync.broadcast(PasswordResponseMessage(success))
+                if (success) {
+                    pushInitialStateTo(senderAddress)
+                }
             }
         }
+    }
+
+    /**
+     * On a successful join, push the GM's playlist (and current playback state) to the
+     * new client. Without this they keep their local lobby playlist and `videoIndex`
+     * from GM's PlaybackState would seek into the wrong list.
+     */
+    private suspend fun pushInitialStateTo(address: String) {
+        val currentVideos = videos.value.orEmpty()
+        if (currentVideos.isNotEmpty()) {
+            repository.gameSync.sendTo(
+                address,
+                VideoListMessage(currentVideos.map { it.toDto() })
+            )
+        }
+        repository.gameSync.sendTo(
+            address,
+            PlaybackState(currentVideoIndex, currentPlaybackPosition, currentIsPlaying)
+        )
     }
 
     private fun addConnectedPlayer(address: String) {
@@ -311,6 +333,16 @@ class GameViewModel(application: Application, val repository: GameRepository = G
 
     fun onFileTransferSuccess(fileName: String) {
         receivedVideoFiles.add(fileName)
+        if (isGameMaster()) return
+        // Swap the playlist entry from the GM's content:// URI to the local file
+        // we just received, otherwise ExoPlayer can't read it on this device.
+        val currentVideos = videos.value?.toMutableList() ?: return
+        val localUri = Uri.fromFile(File(getApplication<Application>().filesDir, fileName))
+        val index = currentVideos.indexOfFirst { it.title == fileName }
+        if (index >= 0 && currentVideos[index].uri != localUri) {
+            currentVideos[index] = Video(localUri, fileName)
+            repository.restoreVideos(currentVideos)
+        }
     }
 
     private fun getBatteryLevel(): Int {
@@ -400,6 +432,10 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     @SuppressLint("MissingPermission") // Permission checked in MainActivity before calling
     fun createGame(password: String) {
         this.gamePassword = password
+        if (!repository.isWifiEnabled()) {
+            postWifiOffError()
+            return
+        }
         _connectionState.postValue(ConnectionStatus.CONNECTING)
         repository.wifiP2pManager.createGroup(
             repository.channel,
@@ -425,6 +461,10 @@ class GameViewModel(application: Application, val repository: GameRepository = G
 
     @SuppressLint("MissingPermission") // Permission checked in MainActivity before calling
     fun discoverPeers() {
+        if (!repository.isWifiEnabled()) {
+            postWifiOffError()
+            return
+        }
         repository.wifiP2pManager.discoverPeers(
             repository.channel,
             object : WifiP2pManager.ActionListener {
@@ -438,6 +478,16 @@ class GameViewModel(application: Application, val repository: GameRepository = G
                     })
                 }
             })
+    }
+
+    private fun postWifiOffError() {
+        _connectionState.postValue(ConnectionStatus.DISCONNECTED)
+        _uiError.postValue(UiError.Recoverable(
+            "Wi-Fi is off. Turn it on to start a game.",
+            "Open Wi-Fi"
+        ) {
+            repository.openWifiSettings()
+        })
     }
 
     fun joinGame(name: String, password: String) {
@@ -454,6 +504,10 @@ class GameViewModel(application: Application, val repository: GameRepository = G
 
     @SuppressLint("MissingPermission") // Permission checked in MainActivity before calling
     fun connectToPlayer(player: Player) {
+        if (!repository.isWifiEnabled()) {
+            postWifiOffError()
+            return
+        }
         val config = WifiP2pConfig().apply {
             deviceAddress = player.device.deviceAddress
         }
@@ -521,12 +575,12 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     }
 
     fun setLights(on: Boolean) {
-        if (on) {
-            turnOnScreen()
-            activateTorch()
-        } else {
-            turnOffScreen()
-            deactivateTorch()
+        viewModelScope.launch {
+            val command = AdvancedCommand(
+                if (on) AdvancedCommandType.LIGHTS_ON else AdvancedCommandType.LIGHTS_OFF
+            )
+            _advancedCommand.postValue(command)
+            repository.gameSync.broadcast(command)
         }
     }
 
@@ -537,6 +591,10 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         isEndingGame = true
         viewModelScope.launch {
             repository.gameSync.broadcast(EndGameMessage())
+            // Give the OS TCP send buffers a moment to drain before tearing down the
+            // P2P link — otherwise removeGroup() can kill the interface while the
+            // EndGameMessage is still in flight, leaving clients stuck in reconnect.
+            delay(END_GAME_DRAIN_MS)
             repository.gameSync.reconnectionManager.stopReconnecting()
             periodicSyncJob?.cancel()
             periodicStatusJob?.cancel()
@@ -688,6 +746,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         const val PLAYBACK_SYNC_INTERVAL_MS = 5_000L
         const val PLAYBACK_DRIFT_THRESHOLD_MS = 2_000L
         const val STATUS_BROADCAST_INTERVAL_MS = 10_000L
+        const val END_GAME_DRAIN_MS = 500L
 
         val Factory: ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")

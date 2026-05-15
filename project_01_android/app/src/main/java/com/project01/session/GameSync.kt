@@ -27,6 +27,10 @@ class GameSync(private val networkManager: NetworkManager) {
         networkManager.broadcast(data)
     }
 
+    suspend fun sendTo(address: String, data: GameMessage) {
+        networkManager.sendTo(address, data)
+    }
+
     fun consumeNonce(address: String): String? {
         return networkManager.consumeNonce(address)
     }

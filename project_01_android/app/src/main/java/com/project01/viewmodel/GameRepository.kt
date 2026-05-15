@@ -50,6 +50,17 @@ class GameRepository(private val application: Application) {
     val wifiP2pManager: WifiP2pManager by lazy {
         application.getSystemService(Context.WIFI_P2P_SERVICE) as WifiP2pManager
     }
+    private val wifiManager: android.net.wifi.WifiManager by lazy {
+        application.getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager
+    }
+
+    fun isWifiEnabled(): Boolean = wifiManager.isWifiEnabled
+
+    fun openWifiSettings() {
+        val intent = android.content.Intent(android.provider.Settings.ACTION_WIFI_SETTINGS)
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        application.startActivity(intent)
+    }
     val gameSync = GameSync(SocketNetworkManager())
     val fileTransfer = FileTransfer()
     val snapshotManager = SnapshotManager(java.io.File(application.filesDir, "game_state_snapshot.json"))

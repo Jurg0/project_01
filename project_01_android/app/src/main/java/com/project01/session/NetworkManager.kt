@@ -7,6 +7,7 @@ interface NetworkManager {
     fun startServer()
     fun connectTo(host: String, port: Int)
     suspend fun broadcast(data: GameMessage)
+    suspend fun sendTo(address: String, data: GameMessage)
     fun shutdown()
     fun consumeNonce(address: String): String? = null
 }

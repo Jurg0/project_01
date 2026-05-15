@@ -5,6 +5,8 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.OutputStream
@@ -30,6 +32,18 @@ class SocketNetworkManager(val port: Int = 8888) : NetworkManager {
     private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _events = MutableSharedFlow<NetworkEvent>()
     override val events: Flow<NetworkEvent> = _events.asSharedFlow()
+
+    // Serializes all writes to socket OutputStreams. Without it, concurrent broadcasts
+    // (e.g. periodic PlaybackState + a manual command) can interleave bytes inside the
+    // 4-byte-length-prefixed framing and corrupt every message caught in the race.
+    private val writeMutex = Mutex()
+
+    private suspend fun writeFrame(stream: OutputStream, bytes: ByteArray) {
+        writeMutex.withLock {
+            stream.write(bytes)
+            stream.flush()
+        }
+    }
 
     override fun startServer() {
         isServer = true
@@ -70,8 +84,7 @@ class SocketNetworkManager(val port: Int = 8888) : NetworkManager {
                 val snapshot = clientOutputStreams.entries.toList()
                 snapshot.forEach { (address, stream) ->
                     try {
-                        stream.write(heartbeatBytes)
-                        stream.flush()
+                        writeFrame(stream, heartbeatBytes)
                     } catch (e: Exception) {
                         Log.w(TAG, "Heartbeat failed for $address", e)
                     }
@@ -124,8 +137,7 @@ class SocketNetworkManager(val port: Int = 8888) : NetworkManager {
                         val nonce = PasswordHasher.generateNonce()
                         clientNonces[address] = nonce
                         val challengeBytes = MessageEnvelope.encode(PasswordChallenge(nonce))
-                        outputStream.write(challengeBytes)
-                        outputStream.flush()
+                        writeFrame(outputStream, challengeBytes)
                     }
                     _events.emit(NetworkEvent.ClientConnected(address))
                 }
@@ -154,19 +166,33 @@ class SocketNetworkManager(val port: Int = 8888) : NetworkManager {
     }
 
     override suspend fun broadcast(data: GameMessage) {
+        val bytes = MessageEnvelope.encode(data)
         withContext(Dispatchers.IO) {
-            val bytes = MessageEnvelope.encode(data)
             val snapshot = clientOutputStreams.entries.toList()
             snapshot.forEach { (address, stream) ->
                 try {
-                    stream.write(bytes)
-                    stream.flush()
+                    writeFrame(stream, bytes)
                 } catch (e: Exception) {
                     Log.e(TAG, "Error broadcasting to $address", e)
                     clientOutputStreams.remove(address)
                     clients.remove(address)?.close()
                     _events.emit(NetworkEvent.Error(e))
                 }
+            }
+        }
+    }
+
+    override suspend fun sendTo(address: String, data: GameMessage) {
+        val stream = clientOutputStreams[address] ?: return
+        val bytes = MessageEnvelope.encode(data)
+        withContext(Dispatchers.IO) {
+            try {
+                writeFrame(stream, bytes)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error sending to $address", e)
+                clientOutputStreams.remove(address)
+                clients.remove(address)?.close()
+                _events.emit(NetworkEvent.Error(e))
             }
         }
     }

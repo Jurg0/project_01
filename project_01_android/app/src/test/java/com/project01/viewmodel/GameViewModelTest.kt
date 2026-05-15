@@ -49,6 +49,7 @@ import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.never
 
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 
 import org.robolectric.RobolectricTestRunner
@@ -114,6 +115,7 @@ class GameViewModelTest {
         `when`(mockGameRepository.fileTransferEvent).thenReturn(MutableLiveData())
         whenever(mockGameRepository.wifiP2pManager).thenReturn(mockWifiP2pManager)
         whenever(mockGameRepository.channel).thenReturn(mockWifiP2pChannel)
+        whenever(mockGameRepository.isWifiEnabled()).thenReturn(true)
         whenever(mockApplication.getSystemService(Context.WIFI_P2P_SERVICE)).thenReturn(mockWifiP2pManager)
         whenever(mockWifiP2pManager.initialize(any(), any(), any())).thenReturn(mockWifiP2pChannel)
         whenever(mockApplication.mainLooper).thenReturn(mock(Looper::class.java))
@@ -186,6 +188,9 @@ class GameViewModelTest {
         makeGameMaster("password")
 
         gameViewModel.endGame()
+        // endGame() now delays after the broadcast to let TCP send buffers drain
+        // before tearing down the P2P group. Advance virtual time past that delay.
+        advanceUntilIdle()
 
         verify(mockGameSync).broadcast(any<com.project01.session.EndGameMessage>())
         verify(mockGameRepository).setGameStarted(false)

@@ -8,7 +8,9 @@ enum class AdvancedCommandType {
     TURN_OFF_SCREEN,
     TURN_ON_SCREEN,
     DEACTIVATE_TORCH,
-    ACTIVATE_TORCH
+    ACTIVATE_TORCH,
+    LIGHTS_ON,
+    LIGHTS_OFF
 }
 
 @Serializable

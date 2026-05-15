@@ -186,10 +186,6 @@ class MainActivity : AppCompatActivity() {
         binding.gmPreviousButton.setOnClickListener { onGmPrevious() }
         binding.gmNextButton.setOnClickListener { onGmPlayNext() }
         binding.gmLightButton.setOnClickListener { onGmToggleLight() }
-        binding.gmPlaylistButton.setOnClickListener {
-            val isVisible = binding.listsContainer.visibility == View.VISIBLE
-            binding.listsContainer.visibility = if (isVisible) View.GONE else View.VISIBLE
-        }
     }
 
     private fun onGmPrevious() {
@@ -203,23 +199,23 @@ class MainActivity : AppCompatActivity() {
 
     private fun onGmPlayNext() {
         val player = exoPlayer ?: return
-        when {
-            player.playWhenReady -> {
-                // Playing → pause back to blue safe-screen.
-                player.playWhenReady = false
-                gameViewModel.broadcastPlaybackState(player.currentPosition, player.playWhenReady, player.currentMediaItemIndex)
+        if (player.playWhenReady) {
+            // Playing → pause AND advance to the next item so the blue safe-screen
+            // sits between the current video and the next one.
+            player.playWhenReady = false
+            player.seekToNextMediaItem()
+            gameViewModel.broadcastPlaybackState(player.currentPosition, player.playWhenReady, player.currentMediaItemIndex)
+        } else {
+            // Paused on blue → start playing the current item.
+            // If we're at the end (pauseAtEndOfMediaItems left us parked), advance first.
+            val duration = player.duration
+            val atEnd = duration > 0 && player.currentPosition >= duration - 500
+            if (atEnd) {
+                player.seekToNextMediaItem()
             }
-            else -> {
-                // Paused. If we're at the end of an item (pauseAtEndOfMediaItems), advance first.
-                val duration = player.duration
-                val atEnd = duration > 0 && player.currentPosition >= duration - 500
-                if (atEnd) {
-                    player.seekToNextMediaItem()
-                }
-                player.playWhenReady = true
-                playFlashEffect { binding.playerView.videoSurfaceView?.visibility = View.VISIBLE }
-                gameViewModel.broadcastPlaybackState(player.currentPosition, player.playWhenReady, player.currentMediaItemIndex)
-            }
+            player.playWhenReady = true
+            playFlashEffect { binding.playerView.videoSurfaceView?.visibility = View.VISIBLE }
+            gameViewModel.broadcastPlaybackState(player.currentPosition, player.playWhenReady, player.currentMediaItemIndex)
         }
     }
 
@@ -509,35 +505,54 @@ class MainActivity : AppCompatActivity() {
 
     private fun handleAdvancedCommand(command: com.project01.session.AdvancedCommand) {
         when (command.type) {
-            com.project01.session.AdvancedCommandType.TURN_OFF_SCREEN -> {
-                isScreenOff = true
-                binding.blackOverlay.visibility = View.VISIBLE
-                setScreenBrightness(0f)
-                binding.turnOffScreenButton.text = "Screen On"
+            com.project01.session.AdvancedCommandType.TURN_OFF_SCREEN -> applyScreenOff()
+            com.project01.session.AdvancedCommandType.TURN_ON_SCREEN -> applyScreenOn()
+            com.project01.session.AdvancedCommandType.DEACTIVATE_TORCH -> applyTorchOff()
+            com.project01.session.AdvancedCommandType.ACTIVATE_TORCH -> applyTorchOn()
+            com.project01.session.AdvancedCommandType.LIGHTS_OFF -> {
+                applyScreenOff()
+                applyTorchOff()
             }
-            com.project01.session.AdvancedCommandType.TURN_ON_SCREEN -> {
-                isScreenOff = false
-                binding.blackOverlay.visibility = View.GONE
-                setScreenBrightness(-1f)
-                binding.turnOffScreenButton.text = "Screen"
-            }
-            com.project01.session.AdvancedCommandType.DEACTIVATE_TORCH -> {
-                isTorchOn = false
-                binding.deactivateTorchButton.text = "Torch"
-                setTorchMode(false)
-            }
-            com.project01.session.AdvancedCommandType.ACTIVATE_TORCH -> {
-                isTorchOn = true
-                binding.deactivateTorchButton.text = "Torch Off"
-                setTorchMode(true)
+            com.project01.session.AdvancedCommandType.LIGHTS_ON -> {
+                applyScreenOn()
+                applyTorchOn()
             }
         }
         updateGmLightButton()
     }
 
+    private fun applyScreenOff() {
+        isScreenOff = true
+        binding.blackOverlay.visibility = View.VISIBLE
+        setScreenBrightness(0f)
+        binding.turnOffScreenButton.text = "Screen On"
+    }
+
+    private fun applyScreenOn() {
+        isScreenOff = false
+        binding.blackOverlay.visibility = View.GONE
+        setScreenBrightness(-1f)
+        binding.turnOffScreenButton.text = "Screen"
+    }
+
+    private fun applyTorchOff() {
+        isTorchOn = false
+        binding.deactivateTorchButton.text = "Torch"
+        setTorchMode(false)
+    }
+
+    private fun applyTorchOn() {
+        isTorchOn = true
+        binding.deactivateTorchButton.text = "Torch Off"
+        setTorchMode(true)
+    }
+
     private fun updateGmLightButton() {
-        // ○ when lights on (full sight), ● when lights off (darkness mode).
-        binding.gmLightButton.text = if (!isScreenOff && isTorchOn) "○" else "●"
+        val lightsOn = !isScreenOff && isTorchOn
+        binding.gmLightButton.setImageResource(
+            if (lightsOn) R.drawable.ic_lightbulb_overlay
+            else R.drawable.ic_lightbulb_outline_overlay
+        )
     }
 
     private fun playFlashEffect(onComplete: () -> Unit) {
@@ -591,8 +606,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showLobby() {
-        val isGameMaster = gameViewModel.isGameMaster()
-        videoAdapter.isGameMaster = isGameMaster
+        // In the lobby nobody has a role yet — show playlist edit controls so the
+        // user can prepare a playlist for the next session (host or guest).
+        videoAdapter.isGameMaster = true
         videoAdapter.notifyDataSetChanged()
 
         binding.errorBanner.visibility = View.GONE

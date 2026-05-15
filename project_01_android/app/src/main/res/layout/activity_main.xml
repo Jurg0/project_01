@@ -19,7 +19,8 @@
             android:id="@+id/player_container"
             android:layout_width="match_parent"
             android:layout_height="0dp"
-            android:layout_weight="3">
+            android:layout_weight="3"
+            android:visibility="gone">
 
             <androidx.media3.ui.PlayerView
                 android:id="@+id/player_view"
@@ -267,49 +268,36 @@
             android:layout_height="wrap_content"
             android:orientation="horizontal">
 
-            <Button
+            <ImageButton
                 android:id="@+id/gm_previous_button"
-                style="@style/Widget.MaterialComponents.Button.TextButton"
                 android:layout_width="0dp"
-                android:layout_height="40dp"
+                android:layout_height="48dp"
                 android:layout_weight="1"
+                android:background="?android:attr/selectableItemBackground"
                 android:contentDescription="Previous video"
-                android:text="‹"
-                android:textColor="#80FFFFFF"
-                android:textSize="20sp" />
+                android:scaleType="centerInside"
+                android:src="@drawable/ic_skip_previous_overlay" />
 
-            <Button
+            <ImageButton
                 android:id="@+id/gm_next_button"
-                style="@style/Widget.MaterialComponents.Button.TextButton"
                 android:layout_width="0dp"
-                android:layout_height="40dp"
+                android:layout_height="48dp"
                 android:layout_weight="1"
+                android:background="?android:attr/selectableItemBackground"
                 android:contentDescription="Play or next video"
-                android:text="▶"
-                android:textColor="#80FFFFFF"
-                android:textSize="20sp" />
+                android:scaleType="centerInside"
+                android:src="@drawable/ic_play_arrow_overlay" />
 
-            <Button
+            <ImageButton
                 android:id="@+id/gm_light_button"
-                style="@style/Widget.MaterialComponents.Button.TextButton"
                 android:layout_width="0dp"
-                android:layout_height="40dp"
+                android:layout_height="48dp"
                 android:layout_weight="1"
+                android:background="?android:attr/selectableItemBackground"
                 android:contentDescription="Toggle lights"
-                android:text="○"
-                android:textColor="#80FFFFFF"
-                android:textSize="20sp" />
+                android:scaleType="centerInside"
+                android:src="@drawable/ic_lightbulb_outline_overlay" />
         </LinearLayout>
-
-        <Button
-            android:id="@+id/gm_playlist_button"
-            style="@style/Widget.MaterialComponents.Button.TextButton"
-            android:layout_width="match_parent"
-            android:layout_height="28dp"
-            android:contentDescription="Show or hide playlist"
-            android:text="•"
-            android:textColor="#50FFFFFF"
-            android:textSize="10sp" />
     </LinearLayout>
 
     <!-- Error banner at the top -->

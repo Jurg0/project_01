@@ -232,15 +232,6 @@
         android:importantForAccessibility="no"
         android:visibility="gone" />
 
-    <!-- White flash overlay for anomaly detection spike -->
-    <View
-        android:id="@+id/flash_overlay"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:background="@android:color/white"
-        android:importantForAccessibility="no"
-        android:visibility="gone" />
-
     <!-- Invisible full-screen tap target for game master (double-tap toggles controls) -->
     <View
         android:id="@+id/invisible_resume_button"
@@ -298,6 +289,20 @@
                 android:scaleType="centerInside"
                 android:src="@drawable/ic_lightbulb_outline_overlay" />
         </LinearLayout>
+
+        <!-- Thin strip below the icon row that reveals the player status / playlist
+             panel. It carries connection + battery info for each player, so the GM
+             needs it during a session even though the playback controls themselves
+             stay minimal. -->
+        <Button
+            android:id="@+id/gm_playlist_button"
+            style="@style/Widget.MaterialComponents.Button.TextButton"
+            android:layout_width="match_parent"
+            android:layout_height="28dp"
+            android:contentDescription="Show or hide playlist"
+            android:text="•"
+            android:textColor="#50FFFFFF"
+            android:textSize="10sp" />
     </LinearLayout>
 
     <!-- Error banner at the top -->

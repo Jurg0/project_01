@@ -69,7 +69,7 @@ class SocketNetworkManager(val port: Int = 8888) : NetworkManager {
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error accepting client", e)
-                    _events.emit(NetworkEvent.Error(e))
+                    _events.emit(NetworkEvent.Error(e, "accept"))
                 }
             }
         }
@@ -120,7 +120,7 @@ class SocketNetworkManager(val port: Int = 8888) : NetworkManager {
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error connecting to host", e)
-                _events.emit(NetworkEvent.Error(e))
+                _events.emit(NetworkEvent.Error(e, "connectTo"))
             }
         }
     }
@@ -155,7 +155,7 @@ class SocketNetworkManager(val port: Int = 8888) : NetworkManager {
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error handling client", e)
-                _events.emit(NetworkEvent.Error(e))
+                _events.emit(NetworkEvent.Error(e, "handleClient"))
             } finally {
                 removeClient(client)
                 try { inputStream?.close() } catch (_: Exception) {}
@@ -176,7 +176,7 @@ class SocketNetworkManager(val port: Int = 8888) : NetworkManager {
                     Log.e(TAG, "Error broadcasting to $address", e)
                     clientOutputStreams.remove(address)
                     clients.remove(address)?.close()
-                    _events.emit(NetworkEvent.Error(e))
+                    _events.emit(NetworkEvent.Error(e, "broadcast→$address"))
                 }
             }
         }
@@ -192,7 +192,7 @@ class SocketNetworkManager(val port: Int = 8888) : NetworkManager {
                 Log.e(TAG, "Error sending to $address", e)
                 clientOutputStreams.remove(address)
                 clients.remove(address)?.close()
-                _events.emit(NetworkEvent.Error(e))
+                _events.emit(NetworkEvent.Error(e, "sendTo→$address"))
             }
         }
     }

@@ -302,26 +302,28 @@ class GameViewModelTest {
     // --- Network event handling tests ---
 
     @Test
-    fun `handleGameSyncEvent Error emits Recoverable UiError`() {
-        val errorMessage = "Connection lost"
+    fun `handleGameSyncEvent Error emits Recoverable UiError with origin and class`() {
         var emitted: UiError? = null
         gameViewModel.uiError.observeForever { emitted = it }
 
-        gameSyncEventLiveData.value = NetworkEvent.Error(Exception(errorMessage))
+        gameSyncEventLiveData.value = NetworkEvent.Error(
+            java.net.SocketException("Connection reset"),
+            "broadcast→192.168.49.5"
+        )
 
         assertTrue(emitted is UiError.Recoverable)
-        assertEquals(errorMessage, emitted!!.message)
+        assertEquals("broadcast→192.168.49.5: SocketException: Connection reset", emitted!!.message)
     }
 
     @Test
-    fun `handleGameSyncEvent Error with null message emits Unknown error UiError`() {
+    fun `handleGameSyncEvent Error with null message still identifies origin and class`() {
         var emitted: UiError? = null
         gameViewModel.uiError.observeForever { emitted = it }
 
-        gameSyncEventLiveData.value = NetworkEvent.Error(Exception())
+        gameSyncEventLiveData.value = NetworkEvent.Error(java.net.SocketException(), "handleClient")
 
         assertTrue(emitted is UiError.Recoverable)
-        assertEquals("Unknown error", emitted!!.message)
+        assertEquals("handleClient: SocketException: (no message)", emitted!!.message)
     }
 
     @Test

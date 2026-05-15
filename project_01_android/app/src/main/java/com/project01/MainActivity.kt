@@ -182,40 +182,54 @@ class MainActivity : AppCompatActivity() {
             true
         }
 
-        // GM overlay controls — three buttons total.
+        // GM overlay controls.
         binding.gmPreviousButton.setOnClickListener { onGmPrevious() }
         binding.gmNextButton.setOnClickListener { onGmPlayNext() }
         binding.gmLightButton.setOnClickListener { onGmToggleLight() }
+        binding.gmPlaylistButton.setOnClickListener {
+            val isVisible = binding.listsContainer.visibility == View.VISIBLE
+            binding.listsContainer.visibility = if (isVisible) View.GONE else View.VISIBLE
+        }
     }
 
     private fun onGmPrevious() {
-        exoPlayer?.let { player ->
-            player.seekToPreviousMediaItem()
-            player.playWhenReady = true
-            playFlashEffect { binding.playerView.videoSurfaceView?.visibility = View.VISIBLE }
-            gameViewModel.broadcastPlaybackState(player.currentPosition, player.playWhenReady, player.currentMediaItemIndex)
-        }
+        val player = exoPlayer ?: return
+        val count = player.mediaItemCount
+        if (count == 0) return
+        // Compute the target index explicitly. seekToPreviousMediaItem() interacts
+        // unpredictably with pauseAtEndOfMediaItems when the player is parked at
+        // the end of an item — the GM's local index and the broadcasted index
+        // could end up disagreeing, desyncing the player device.
+        val targetIndex = (player.currentMediaItemIndex - 1).coerceAtLeast(0)
+        player.seekTo(targetIndex, 0)
+        player.playWhenReady = true
+        binding.playerView.videoSurfaceView?.visibility = View.VISIBLE
+        gameViewModel.broadcastPlaybackState(0, true, targetIndex)
     }
 
     private fun onGmPlayNext() {
         val player = exoPlayer ?: return
+        val count = player.mediaItemCount
+        if (count == 0) return
+        val currentIndex = player.currentMediaItemIndex
         if (player.playWhenReady) {
             // Playing → pause AND advance to the next item so the blue safe-screen
             // sits between the current video and the next one.
+            val nextIndex = (currentIndex + 1).coerceAtMost(count - 1)
+            player.seekTo(nextIndex, 0)
             player.playWhenReady = false
-            player.seekToNextMediaItem()
-            gameViewModel.broadcastPlaybackState(player.currentPosition, player.playWhenReady, player.currentMediaItemIndex)
+            gameViewModel.broadcastPlaybackState(0, false, nextIndex)
         } else {
-            // Paused on blue → start playing the current item.
-            // If we're at the end (pauseAtEndOfMediaItems left us parked), advance first.
+            // Paused on blue → start playing. If we're parked at the end of the
+            // current item (pauseAtEndOfMediaItems), advance to the next one first.
             val duration = player.duration
             val atEnd = duration > 0 && player.currentPosition >= duration - 500
-            if (atEnd) {
-                player.seekToNextMediaItem()
-            }
+            val targetIndex = if (atEnd) (currentIndex + 1).coerceAtMost(count - 1) else currentIndex
+            val targetPosition = if (atEnd || targetIndex != currentIndex) 0L else player.currentPosition
+            player.seekTo(targetIndex, targetPosition)
             player.playWhenReady = true
-            playFlashEffect { binding.playerView.videoSurfaceView?.visibility = View.VISIBLE }
-            gameViewModel.broadcastPlaybackState(player.currentPosition, player.playWhenReady, player.currentMediaItemIndex)
+            binding.playerView.videoSurfaceView?.visibility = View.VISIBLE
+            gameViewModel.broadcastPlaybackState(targetPosition, true, targetIndex)
         }
     }
 
@@ -386,13 +400,10 @@ class MainActivity : AppCompatActivity() {
         })
 
         gameViewModel.showVideo.observe(this, Observer { show ->
-            if (show) {
-                playFlashEffect {
-                    binding.playerView.videoSurfaceView?.visibility = View.VISIBLE
-                }
-            } else {
-                binding.playerView.videoSurfaceView?.visibility = View.GONE
-            }
+            // No flash effect here — it's player-side only (GM doesn't receive its
+            // own PlaybackState broadcasts) and the GM gets explicit flashes on
+            // their own button presses in onGmPrevious / onGmPlayNext.
+            binding.playerView.videoSurfaceView?.visibility = if (show) View.VISIBLE else View.GONE
         })
 
         gameViewModel.requestEnableBluetooth.observe(this, Observer {
@@ -555,19 +566,6 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    private fun playFlashEffect(onComplete: () -> Unit) {
-        binding.flashOverlay.alpha = 1f
-        binding.flashOverlay.visibility = View.VISIBLE
-        binding.flashOverlay.animate()
-            .alpha(0f)
-            .setDuration(250)
-            .withEndAction {
-                binding.flashOverlay.visibility = View.GONE
-                onComplete()
-            }
-            .start()
-    }
-
     private fun setScreenBrightness(brightness: Float) {
         val params = window.attributes
         params.screenBrightness = brightness // 0f = minimum, -1f = system default
@@ -621,7 +619,6 @@ class MainActivity : AppCompatActivity() {
         binding.invisibleResumeButton.visibility = View.GONE
         binding.blackOverlay.visibility = View.GONE
         binding.gmOverlay.visibility = View.GONE
-        binding.flashOverlay.visibility = View.GONE
         binding.playerView.useController = true
         isGmOverlayVisible = false
         isScreenOff = false

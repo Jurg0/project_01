@@ -201,7 +201,9 @@ class GameViewModel(application: Application, val repository: GameRepository = G
                 }
             }
             is NetworkEvent.Error -> {
-                _uiError.postValue(UiError.Recoverable(event.exception.message ?: "Unknown error"))
+                val cls = event.exception.javaClass.simpleName
+                val msg = event.exception.message?.takeIf { it.isNotBlank() } ?: "(no message)"
+                _uiError.postValue(UiError.Recoverable("${event.origin}: $cls: $msg"))
             }
             is NetworkEvent.ClientConnected -> {
                 if (!isGameMaster()) {
@@ -668,10 +670,16 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     private fun applyPlaybackState(state: PlaybackState) {
         val drift = Math.abs(state.playbackPosition - currentPlaybackPosition)
         val videoChanged = state.videoIndex != currentVideoIndex
+        val playingChanged = state.playWhenReady != currentIsPlaying
         currentVideoIndex = state.videoIndex
         currentPlaybackPosition = state.playbackPosition
         currentIsPlaying = state.playWhenReady
-        _showVideo.postValue(state.playWhenReady)
+        // Only emit on transition — the GM rebroadcasts PlaybackState every 5s while
+        // playing, and unconditional emission would fire the white flash effect on
+        // every cycle (the "pulsing" the GM reported).
+        if (playingChanged) {
+            _showVideo.postValue(state.playWhenReady)
+        }
         if (videoChanged || drift > PLAYBACK_DRIFT_THRESHOLD_MS || !state.playWhenReady) {
             _playbackCommand.postValue(PlaybackCommand(PlaybackCommandType.PLAY_PAUSE, state.videoIndex, state.playbackPosition, state.playWhenReady))
         }

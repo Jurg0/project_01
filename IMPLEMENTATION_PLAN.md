@@ -4,7 +4,7 @@ Forward-looking refactor work. Ranked by reliability impact (top) then hygiene (
 
 The recent round of playback / sync bugs (drift filter dropping commands, GM/player index disagreement, white pulsing, etc.) shared a common root: too many parallel state representations and too much logic concentrated in `MainActivity` + `GameViewModel`. This list is the recovery plan.
 
-> **Session-handover note:** Items R1, R2, R3, R5, R6, R7, R8 are landed. Items R4 and R9 are open. Each open item below carries enough context — files, line ranges, design decisions already made, test guidance — to resume cold in a fresh session.
+> **Session-handover note:** Items R1, R2, R3, R4, R5, R6, R7, R8 are landed. Only R9 (a doc sweep) is open. Each open item below carries enough context — files, line ranges, design decisions already made, test guidance — to resume cold in a fresh session.
 
 ---
 
@@ -48,22 +48,18 @@ Done across three commits:
 
 **Decision:** `GameViewModel` stays as the View-facing facade. It still owns: LiveData proxying, player-roster management (PlayerNameMessage / PlayerStatusMessage handlers + add/remove on Client(Dis)Connected for GM), Bluetooth presence prompt, snapshot orchestration glue, periodic status broadcast, named playlist + playlist editing, advanced commands (screen/torch/lights), and `NetworkEvent.Error` → `UiError.Recoverable`. Net result: `GameViewModel` is 380 lines (down from ~750); the heavy logic now lives in four focused classes (PlaybackController, FileTransferOrchestrator, SessionController, GameRepository).
 
-### ○ R4 — Split `MainActivity`
+### ● R4 — Split `MainActivity`
 
-**Problem.** ~800 lines doing permissions, gestures, ExoPlayer wiring, key-event mapping, error display, screen/torch hardware, dialogs, lifecycle, accessibility.
+Done as four delegate extractions in one commit. `MainActivity` dropped from ~730 to 441 lines.
 
-**Depends on:** R1 (cleaner ExoPlayer wiring) and ideally R3 (cleaner delegation surface).
+- `PermissionHelper` (`ui/PermissionHelper.kt`) — `hasPermissions`, `requirePermissions`, `wifiP2pPermissions`, plus `onPermissionsResult`. The `ActivityResultLauncher` itself still lives on the Activity (Android requires registration before STARTED); the helper takes a `launchPermissions: (Array<String>) -> Unit` callback.
+- `LightsAndScreenDelegate` (`ui/LightsAndScreenDelegate.kt`) — owns `isScreenOff` / `isTorchOn`, applies all six `AdvancedCommandType` variants, manages torch (CameraManager), screen brightness, the black overlay, and the lobby-button labels. Exposes `isLightsOff()` so the GM "light" toggle has the right sign and `resetToLobbyDefaults()` for `showLobby`.
+- `PlaybackViewDelegate` (`ui/PlaybackViewDelegate.kt`) — owns the ExoPlayer lifecycle, the listener that feeds `playbackController.onPlayerTransition`, the `repeatOnLifecycle(STARTED)` intent-reconciliation coroutine, and `updatePlaylist`. Exposes `mediaItemCount()` and `isAtEndOfCurrent()` for GM control code (ExoPlayer is the only authority on item duration).
+- `GmControlsDelegate` (`ui/GmControlsDelegate.kt`) — gesture detector, the four GM buttons, GM overlay visibility, and the bluetooth-presenter HID key mapping (`dispatchKeyEvent`). Takes the previous two delegates plus `isGameMaster`/`isGameStarted` accessors and a long-press callback (the End Game dialog still lives on the Activity).
 
-**Candidates:**
+**Decision:** plain delegates over Fragments (no Fragment lifecycle complexity; just plain Kotlin classes constructed in `onCreate` that hold a binding/activity reference). `MainActivity.dispatchKeyEvent` is a one-line shim that returns true when the delegate consumed the event, else falls through to super.
 
-- `GmControlsDelegate` — gesture detector (`MainActivity.kt:172-186`), `onGm*` handlers (lines 191-238), GM overlay visibility, `dispatchKeyEvent` HID mapping (lines 248-283).
-- `PlaybackViewDelegate` — `initializePlayer`/`releasePlayer`, playlist updates (`updatePlayerPlaylist`), surface visibility observer.
-- `LightsAndScreenDelegate` — `setTorchMode`, `setScreenBrightness`, `applyScreenOn/Off`, `applyTorchOn/Off`, black overlay management.
-- `PermissionHelper` — `requirePermissions`, `wifiP2pPermissions`, `hasPermissions`, `permissionLauncher`.
-
-**Decision left for the doing:** delegates vs. fragments. Delegates (plain Kotlin classes constructed in `onCreate`, holding a reference to `binding` + `gameViewModel`) are simpler and avoid Fragment lifecycle complexity. Recommend delegates.
-
-**Estimated scope:** several hours. Lower priority than R3 — `MainActivity` is busy but mostly readable; the bugs lived in `GameViewModel`.
+**Files modified:** `MainActivity.kt`, `ui/PermissionHelper.kt` (new), `ui/LightsAndScreenDelegate.kt` (new), `ui/PlaybackViewDelegate.kt` (new), `ui/GmControlsDelegate.kt` (new). 176 unit tests pass; APK builds clean. No new tests — the delegates are mostly thin View wiring + glue, and `MainActivityTest` (Robolectric `ActivityScenario` smoke test) still validates the full construction path.
 
 ### ● R5 — Constructor-inject `GameRepository`'s collaborators
 
@@ -95,7 +91,6 @@ Verify after R1–R4 land that the layer diagram and conventions in `CLAUDE.md` 
 
 | Item | Status | Depends on | Rough scope |
 |------|--------|------------|-------------|
-| R4   | ○      | R1, R3     | several hours, splittable |
 | R9   | ○      | R1–R4      | small sweep |
 
 ---

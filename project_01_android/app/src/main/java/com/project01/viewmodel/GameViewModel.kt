@@ -27,7 +27,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import java.io.File
 
 class GameViewModel(application: Application, val repository: GameRepository = GameRepository(application)) : AndroidViewModel(application) {
 
@@ -51,13 +50,24 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         isGameMaster = { isGameMaster() },
     )
 
+    val fileTransferOrchestrator: FileTransferOrchestrator = FileTransferOrchestrator(
+        gameSync = repository.gameSync,
+        fileTransfer = repository.fileTransfer,
+        filesDir = application.filesDir,
+        contentResolver = application.contentResolver,
+        scope = viewModelScope,
+        isGameMaster = { isGameMaster() },
+        findFreePort = { repository.findFreePort() },
+        videosProvider = { videos.value },
+        updateVideos = { repository.restoreVideos(it) },
+    )
+
     private var player: Player? = null
     private var lastHost: String? = null
     private var lastPort: Int? = null
     private var bluetoothAdapter: BluetoothAdapter? = null
     private var periodicSyncJob: Job? = null
     private var periodicStatusJob: Job? = null
-    private val receivedVideoFiles = mutableSetOf<String>()
     private var isEndingGame = false
 
     private val connectionInfoObserver = Observer<android.net.wifi.p2p.WifiP2pInfo> { info ->
@@ -178,7 +188,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
                 val (data, address) = event.data to event.sender
                 when (data) {
                     is VideoListMessage -> handleVideoList(data.videos.map { it.toVideo() }, address)
-                    is FileTransferRequest -> handleFileTransferRequest(data, address)
+                    is FileTransferRequest -> fileTransferOrchestrator.handleFileTransferRequest(data, address)
                     is PlaybackCommand -> playbackController.applyFromWire(data)
                     is PlaybackState -> playbackController.applyDriftCorrection(data)
                     is AdvancedCommand -> _advancedCommand.postValue(data)
@@ -334,17 +344,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     }
 
     fun onFileTransferSuccess(fileName: String) {
-        receivedVideoFiles.add(fileName)
-        if (isGameMaster()) return
-        // Swap the playlist entry from the GM's content:// URI to the local file
-        // we just received, otherwise ExoPlayer can't read it on this device.
-        val currentVideos = videos.value?.toMutableList() ?: return
-        val localUri = Uri.fromFile(File(getApplication<Application>().filesDir, fileName))
-        val index = currentVideos.indexOfFirst { it.title == fileName }
-        if (index >= 0 && currentVideos[index].uri != localUri) {
-            currentVideos[index] = Video(localUri, fileName)
-            repository.restoreVideos(currentVideos)
-        }
+        fileTransferOrchestrator.onFileTransferSuccess(fileName)
     }
 
     private fun getBatteryLevel(): Int {
@@ -361,7 +361,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
                     repository.gameSync.broadcast(
                         PlayerStatusMessage(
                             batteryLevel = getBatteryLevel(),
-                            receivedVideos = receivedVideoFiles.toList()
+                            receivedVideos = fileTransferOrchestrator.receivedVideoFiles.toList()
                         )
                     )
                 }
@@ -377,7 +377,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         isEndingGame = true
         repository.gameSync.reconnectionManager.stopReconnecting()
         periodicStatusJob?.cancel()
-        receivedVideoFiles.clear()
+        fileTransferOrchestrator.clearReceivedFiles()
         repository.snapshotManager.clearSnapshot()
         repository.restoreVideos(emptyList())
         repository.updatePlayers(emptyList())
@@ -405,39 +405,12 @@ class GameViewModel(application: Application, val repository: GameRepository = G
             repository.restoreVideos(newVideos)
             return
         }
-        // For each title: if the file already lives in filesDir (transferred
-        // earlier in this session, or left over from a prior session), use the
-        // local URI directly. Otherwise ask the GM to send it. This skips the
-        // redundant redownload that would otherwise happen every time the GM
-        // re-broadcasts the playlist (e.g. on every new joiner via
-        // pushInitialStateTo).
-        val thisAddress = thisDevice.value?.deviceAddress
-        val resolved = newVideos.map { video ->
-            val localFile = File(getApplication<Application>().filesDir, video.title)
-            if (localFile.exists()) {
-                receivedVideoFiles.add(video.title)
-                Video(Uri.fromFile(localFile), video.title)
-            } else {
-                if (thisAddress != null) {
-                    requestFileTransfer(video.title, thisAddress, senderAddress)
-                }
-                video
-            }
-        }
+        val resolved = fileTransferOrchestrator.resolveAndRequestMissing(
+            newVideos,
+            thisDevice.value?.deviceAddress,
+            senderAddress,
+        )
         repository.restoreVideos(resolved)
-    }
-
-    private fun handleFileTransferRequest(request: FileTransferRequest, fromIp: String) {
-        if (!isGameMaster()) return
-        val video = videos.value?.find { it.title == request.fileName } ?: return
-        viewModelScope.launch {
-            repository.fileTransfer.sendFileWithRetry(
-                fromIp,
-                request.port,
-                video.uri,
-                getApplication<Application>().contentResolver
-            )
-        }
     }
 
     private var gamePassword: String? = null
@@ -670,27 +643,6 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         if (videoIndex < 0) return
         playbackController.play(videoIndex)
     }
-
-    private fun requestFileTransfer(
-        fileName: String,
-        targetAddress: String,
-        senderAddress: String
-    ) {
-        viewModelScope.launch {
-            val port = repository.findFreePort()
-            val outputFile = File(getApplication<Application>().filesDir, fileName)
-            // Start the receive listener first so the ServerSocket is bound (or
-            // about to bind) when the GM tries to connect back. sendFileWithRetry's
-            // exponential backoff covers any residual race.
-            launch {
-                repository.fileTransfer.startReceivingWithRetry(port, outputFile)
-            }
-            repository.gameSync.broadcast(
-                FileTransferRequest(fileName, port, senderAddress, targetAddress)
-            )
-        }
-    }
-
 
 
     private fun startPeriodicSnapshots() {

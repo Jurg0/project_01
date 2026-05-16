@@ -119,6 +119,10 @@ class GameViewModelTest {
         whenever(mockApplication.getSystemService(Context.WIFI_P2P_SERVICE)).thenReturn(mockWifiP2pManager)
         whenever(mockWifiP2pManager.initialize(any(), any(), any())).thenReturn(mockWifiP2pChannel)
         whenever(mockApplication.mainLooper).thenReturn(mock(Looper::class.java))
+        // FileTransferOrchestrator captures these at GameViewModel construction.
+        whenever(mockApplication.filesDir).thenReturn(java.io.File(System.getProperty("java.io.tmpdir"), "gvm-test").apply { mkdirs() })
+        whenever(mockApplication.contentResolver).thenReturn(mock(android.content.ContentResolver::class.java))
+        whenever(mockGameRepository.fileTransfer).thenReturn(mock(com.project01.session.FileTransfer::class.java))
         gameViewModel = GameViewModel(mockApplication, mockGameRepository)
     }
 

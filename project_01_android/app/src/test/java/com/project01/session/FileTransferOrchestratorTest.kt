@@ -1,0 +1,228 @@
+package com.project01.session
+
+import android.net.Uri
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runTest
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.mockito.kotlin.any
+import org.mockito.kotlin.eq
+import org.mockito.kotlin.mock
+import org.mockito.kotlin.never
+import org.mockito.kotlin.verify
+import org.mockito.kotlin.verifyNoInteractions
+import org.robolectric.RobolectricTestRunner
+import java.io.File
+
+@OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
+class FileTransferOrchestratorTest {
+
+    private lateinit var tmpDir: File
+    private val captureBroadcasts = mutableListOf<GameMessage>()
+    private lateinit var network: TestNetworkManager
+    private lateinit var sync: GameSync
+    private lateinit var fileTransfer: FileTransfer
+    private lateinit var videosState: MutableList<Video>
+    private val updatedVideosLog = mutableListOf<List<Video>>()
+    private var isGameMaster = false
+
+    private val dispatcher = UnconfinedTestDispatcher()
+    private val scope = TestScope(dispatcher)
+
+    private fun newOrchestrator(): FileTransferOrchestrator {
+        return FileTransferOrchestrator(
+            gameSync = sync,
+            fileTransfer = fileTransfer,
+            filesDir = tmpDir,
+            contentResolver = mock(),
+            scope = scope,
+            isGameMaster = { isGameMaster },
+            findFreePort = { 9999 },
+            videosProvider = { videosState.toList() },
+            updateVideos = { updatedVideosLog.add(it) },
+        )
+    }
+
+    @Before
+    fun setup() {
+        tmpDir = File.createTempFile("orchestrator", "").apply {
+            delete()
+            mkdirs()
+        }
+        captureBroadcasts.clear()
+        updatedVideosLog.clear()
+        videosState = mutableListOf()
+        network = TestNetworkManager().apply {
+            onBroadcast = { msg -> captureBroadcasts.add(msg) }
+        }
+        sync = GameSync(network)
+        fileTransfer = mock()
+    }
+
+    @After
+    fun teardown() {
+        tmpDir.deleteRecursively()
+    }
+
+    @Test
+    fun `onFileTransferSuccess records file and rewrites video URI for non-game-master`() {
+        isGameMaster = false
+        videosState.add(Video(Uri.parse("content://gm/clip1.mp4"), "clip1.mp4"))
+        val orchestrator = newOrchestrator()
+
+        orchestrator.onFileTransferSuccess("clip1.mp4")
+
+        assertTrue(orchestrator.receivedVideoFiles.contains("clip1.mp4"))
+        assertEquals(1, updatedVideosLog.size)
+        val updated = updatedVideosLog.single().single()
+        assertEquals("clip1.mp4", updated.title)
+        assertEquals(Uri.fromFile(File(tmpDir, "clip1.mp4")), updated.uri)
+    }
+
+    @Test
+    fun `onFileTransferSuccess records file but does not rewrite URI for game master`() {
+        isGameMaster = true
+        videosState.add(Video(Uri.parse("content://gm/clip1.mp4"), "clip1.mp4"))
+        val orchestrator = newOrchestrator()
+
+        orchestrator.onFileTransferSuccess("clip1.mp4")
+
+        assertTrue(orchestrator.receivedVideoFiles.contains("clip1.mp4"))
+        assertTrue("GM should not rewrite its own video list", updatedVideosLog.isEmpty())
+    }
+
+    @Test
+    fun `onFileTransferSuccess is idempotent when URI already points at local file`() {
+        isGameMaster = false
+        val localUri = Uri.fromFile(File(tmpDir, "clip1.mp4"))
+        videosState.add(Video(localUri, "clip1.mp4"))
+        val orchestrator = newOrchestrator()
+
+        orchestrator.onFileTransferSuccess("clip1.mp4")
+
+        assertTrue(orchestrator.receivedVideoFiles.contains("clip1.mp4"))
+        assertTrue("No update when URI already local", updatedVideosLog.isEmpty())
+    }
+
+    @Test
+    fun `handleFileTransferRequest sends file when game master holds the video`() = runTest(dispatcher) {
+        isGameMaster = true
+        val video = Video(Uri.parse("content://gm/clip1.mp4"), "clip1.mp4")
+        videosState.add(video)
+        val orchestrator = newOrchestrator()
+
+        orchestrator.handleFileTransferRequest(
+            FileTransferRequest("clip1.mp4", port = 9000, senderAddress = "gm", targetAddress = "peer"),
+            fromIp = "peer",
+        )
+        advanceUntilIdle()
+
+        verify(fileTransfer).sendFileWithRetry(eq("peer"), eq(9000), eq(video.uri), any(), any())
+    }
+
+    @Test
+    fun `handleFileTransferRequest is no-op for non-game-master`() = runTest(dispatcher) {
+        isGameMaster = false
+        videosState.add(Video(Uri.parse("content://gm/clip1.mp4"), "clip1.mp4"))
+        val orchestrator = newOrchestrator()
+
+        orchestrator.handleFileTransferRequest(
+            FileTransferRequest("clip1.mp4", port = 9000, senderAddress = "gm", targetAddress = "peer"),
+            fromIp = "peer",
+        )
+        advanceUntilIdle()
+
+        verifyNoInteractions(fileTransfer)
+    }
+
+    @Test
+    fun `handleFileTransferRequest skips unknown title`() = runTest(dispatcher) {
+        isGameMaster = true
+        val orchestrator = newOrchestrator()
+
+        orchestrator.handleFileTransferRequest(
+            FileTransferRequest("missing.mp4", port = 9000, senderAddress = "gm", targetAddress = "peer"),
+            fromIp = "peer",
+        )
+        advanceUntilIdle()
+
+        verifyNoInteractions(fileTransfer)
+    }
+
+    @Test
+    fun `resolveAndRequestMissing rewrites locally-cached titles and skips network request`() = runTest(dispatcher) {
+        isGameMaster = false
+        File(tmpDir, "cached.mp4").writeText("already-here")
+        val orchestrator = newOrchestrator()
+
+        val incoming = listOf(
+            Video(Uri.parse("content://gm/cached.mp4"), "cached.mp4"),
+        )
+
+        val resolved = orchestrator.resolveAndRequestMissing(incoming, thisAddress = "peer", senderAddress = "gm")
+        advanceUntilIdle()
+
+        assertEquals(1, resolved.size)
+        assertEquals(Uri.fromFile(File(tmpDir, "cached.mp4")), resolved[0].uri)
+        assertTrue(orchestrator.receivedVideoFiles.contains("cached.mp4"))
+        assertTrue("No transfer request for cached file", captureBroadcasts.isEmpty())
+    }
+
+    @Test
+    fun `resolveAndRequestMissing requests transfer for missing files`() = runTest(dispatcher) {
+        isGameMaster = false
+        val orchestrator = newOrchestrator()
+        val incoming = listOf(Video(Uri.parse("content://gm/new.mp4"), "new.mp4"))
+
+        val resolved = orchestrator.resolveAndRequestMissing(incoming, thisAddress = "peer", senderAddress = "gm")
+        advanceUntilIdle()
+
+        // Returned list preserves the original (content://) URI for missing files.
+        assertEquals(1, resolved.size)
+        assertEquals(incoming[0].uri, resolved[0].uri)
+        assertFalse(orchestrator.receivedVideoFiles.contains("new.mp4"))
+        // Orchestrator broadcasts a FileTransferRequest and starts the receive listener.
+        assertEquals(1, captureBroadcasts.size)
+        val request = captureBroadcasts.single() as FileTransferRequest
+        assertEquals("new.mp4", request.fileName)
+        assertEquals(9999, request.port)
+        assertEquals("gm", request.senderAddress)
+        assertEquals("peer", request.targetAddress)
+        verify(fileTransfer).startReceivingWithRetry(eq(9999), any(), any())
+    }
+
+    @Test
+    fun `resolveAndRequestMissing skips request when thisAddress is null`() = runTest(dispatcher) {
+        isGameMaster = false
+        val orchestrator = newOrchestrator()
+        val incoming = listOf(Video(Uri.parse("content://gm/new.mp4"), "new.mp4"))
+
+        orchestrator.resolveAndRequestMissing(incoming, thisAddress = null, senderAddress = "gm")
+        advanceUntilIdle()
+
+        assertTrue("No broadcast when own address is unknown", captureBroadcasts.isEmpty())
+        verify(fileTransfer, never()).startReceivingWithRetry(any(), any(), any())
+    }
+
+    @Test
+    fun `clearReceivedFiles empties the set`() {
+        isGameMaster = false
+        val orchestrator = newOrchestrator()
+        orchestrator.onFileTransferSuccess("a.mp4")
+        orchestrator.onFileTransferSuccess("b.mp4")
+        assertEquals(2, orchestrator.receivedVideoFiles.size)
+
+        orchestrator.clearReceivedFiles()
+
+        assertTrue(orchestrator.receivedVideoFiles.isEmpty())
+    }
+}

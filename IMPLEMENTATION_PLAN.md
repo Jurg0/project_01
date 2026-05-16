@@ -38,18 +38,13 @@ Deleted from `GameViewModel`: the `currentVideoIndex/Position/IsPlaying` fields,
 
 ## Code health (medium impact)
 
-### ○ R3 — Split `GameViewModel`
+### ◐ R3 — Split `GameViewModel`
 
-**Problem.** ~750 lines mixing: networking handshake, password verification, file-transfer orchestration, periodic playback sync, snapshot save/restore, playlist persistence, Bluetooth presence, GM/player role tracking. Every change risks unrelated side-effects.
+Landing one extraction per commit. Current status:
 
-**Depends on:** R1 (PlaybackController is the first extraction).
-
-**Real extraction candidates:**
-
-- `SessionController` — `handleConnectionInfo`, `handlePasswordChallenge`, `handlePasswordMessage`, `pushInitialStateTo`, `createGame`, `joinGame`, `endGame`, `handleEndGame` reconnection plumbing.
-- `PlaybackController` — see R1.
-- `FileTransferOrchestrator` — `requestFileTransfer`, `handleFileTransferRequest`, `onFileTransferSuccess`, `handleVideoList`'s file-resolve logic, `receivedVideoFiles` set.
-- `GameViewModel` keeps: LiveData exposure for the View, wiring (observers + lifecycle), Bluetooth presence check, snapshot orchestration glue, periodic status broadcast.
+- `PlaybackController` — landed in R1.
+- `FileTransferOrchestrator` — **landed.** `requestFileTransfer`, `handleFileTransferRequest`, `onFileTransferSuccess`, the `handleVideoList` file-resolve loop, and the `receivedVideoFiles` set all moved to `session/FileTransferOrchestrator.kt`. `GameViewModel.handleVideoList` is now a 10-line shim. 10 focused unit tests in `FileTransferOrchestratorTest`.
+- `SessionController` — open. Should own `handleConnectionInfo`, `handlePasswordChallenge`, `handlePasswordMessage`, `pushInitialStateTo`, `createGame`, `joinGame`, `endGame`, `handleEndGame`, plus the `gamePassword`/`pendingPassword`/`pendingNonce`/`localPlayerName`/`player` (role-tracking) state and the reconnect host/port memory. After this lands, `GameViewModel` keeps: LiveData exposure, observer wiring, Bluetooth presence, snapshot orchestration glue, periodic status broadcast, playlist editing.
 
 **Migration approach:** extract one at a time, keep `GameViewModel` as a facade that delegates to the new classes. Move one method at a time, run tests after each.
 
@@ -104,7 +99,7 @@ Verify after R1–R4 land that the layer diagram and conventions in `CLAUDE.md` 
 
 | Item | Status | Depends on | Rough scope |
 |------|--------|------------|-------------|
-| R3   | ○      | R1         | several hours, splittable |
+| R3   | ◐      | R1         | several hours, splittable (FileTransferOrchestrator landed; SessionController open) |
 | R4   | ○      | R1, R3     | several hours, splittable |
 | R9   | ○      | R1–R4      | small sweep |
 

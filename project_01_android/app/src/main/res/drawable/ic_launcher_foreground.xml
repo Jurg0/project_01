@@ -1,17 +1,43 @@
+<!-- Confused ghost. Background lives in @color/ic_launcher_background.
+     Coordinates kept in the 400-unit space the source SVG used; Android
+     scales to the 108dp foreground. The whole figure fits inside the
+     central safe zone, so circle / squircle / rounded-square masks don't
+     clip the eyes or the wavy bottom. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
+    android:viewportWidth="400"
+    android:viewportHeight="400">
 
-    <!-- Vertical line — a crack, a signal, a threshold -->
+    <!-- Ghost body with wavy bottom -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M53.5,28 L54.5,28 L54.5,80 L53.5,80 Z" />
+        android:fillColor="#FAFAFA"
+        android:pathData="M 120,140 Q 120,80 200,80 Q 280,80 280,140 L 280,285 Q 270,310 255,290 Q 240,310 225,290 Q 210,310 195,290 Q 180,310 165,290 Q 150,310 135,290 Q 120,310 120,285 Z" />
 
-    <!-- Small dot on the left — something watching -->
+    <!-- Left eye (big, surprised) -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M40,54m-2,0a2,2 0,1 1,4 0a2,2 0,1 1,-4 0" />
+        android:fillColor="#1A1A1A"
+        android:pathData="M 148,180 a 22,22 0 1,0 44,0 a 22,22 0 1,0 -44,0 Z" />
+    <path
+        android:fillColor="#FAFAFA"
+        android:pathData="M 171,172 a 7,7 0 1,0 14,0 a 7,7 0 1,0 -14,0 Z" />
+
+    <!-- Right eye (smaller, looking sideways) -->
+    <path
+        android:fillColor="#1A1A1A"
+        android:pathData="M 215,180 a 17,17 0 1,0 34,0 a 17,17 0 1,0 -34,0 Z" />
+    <path
+        android:fillColor="#FAFAFA"
+        android:pathData="M 235,174 a 5,5 0 1,0 10,0 a 5,5 0 1,0 -10,0 Z" />
+
+    <!-- Surprised O mouth -->
+    <path
+        android:fillColor="#1A1A1A"
+        android:pathData="M 186,240 a 14,20 0 1,0 28,0 a 14,20 0 1,0 -28,0 Z" />
+
+    <!-- Tiny anxious sweat drop -->
+    <path
+        android:fillColor="#4FC3F7"
+        android:pathData="M 140,110 Q 138,120 142,122 Q 146,120 142,110 Z" />
 
 </vector>

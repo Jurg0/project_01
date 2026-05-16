@@ -14,8 +14,12 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.Observer
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.LinearLayoutManager
+import kotlinx.coroutines.launch
 import com.google.android.material.snackbar.Snackbar
 import com.project01.databinding.ActivityMainBinding
 import com.project01.p2p.ConnectionService
@@ -232,10 +236,26 @@ class MainActivity : AppCompatActivity() {
             updateUi(isStarted)
             if (isStarted) {
                 ContextCompat.startForegroundService(this, Intent(this, ConnectionService::class.java))
+                val current = gameViewModel.playbackController.currentIntent()
+                videoAdapter.setCurrent(current.videoIndex, current.isPlaying)
             } else {
                 stopService(Intent(this, ConnectionService::class.java))
+                videoAdapter.setCurrent(-1, false)
             }
         })
+
+        // Mirror the playback intent onto the playlist now-playing indicator.
+        // Only meaningful during an active session; the isGameStarted observer
+        // above clears it on lobby return.
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                gameViewModel.playbackController.intent.collect { intent ->
+                    if (gameViewModel.isGameStarted.value == true) {
+                        videoAdapter.setCurrent(intent.videoIndex, intent.isPlaying)
+                    }
+                }
+            }
+        }
 
         gameViewModel.toastMessage.observe(this, Observer { message ->
             Toast.makeText(this, message, Toast.LENGTH_SHORT).show()

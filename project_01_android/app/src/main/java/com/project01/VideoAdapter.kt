@@ -24,10 +24,33 @@ class VideoAdapter(
     private val progressMap = mutableMapOf<String, Int>()
     private val failedTransfers = mutableSetOf<String>()
 
+    /** -1 = no current item (lobby / non-session). */
+    private var currentIndex: Int = -1
+    private var currentIsPlaying: Boolean = false
+
     override fun onCurrentListChanged(previousList: MutableList<Video>, currentList: MutableList<Video>) {
         val currentTitles = currentList.map { it.title }.toSet()
         progressMap.keys.retainAll(currentTitles)
         failedTransfers.retainAll(currentTitles)
+    }
+
+    /**
+     * Sets which row shows the now-playing indicator. Pass `index = -1` to
+     * clear (lobby, non-session, non-GM). Only the previous and new rows are
+     * refreshed.
+     */
+    fun setCurrent(index: Int, isPlaying: Boolean) {
+        if (index == currentIndex && isPlaying == currentIsPlaying) return
+        val previous = currentIndex
+        currentIndex = index
+        currentIsPlaying = isPlaying
+        if (previous != index) {
+            if (previous in 0 until itemCount) notifyItemChanged(previous)
+            if (index in 0 until itemCount) notifyItemChanged(index)
+        } else if (index in 0 until itemCount) {
+            // Same row, only the play/pause variant changed.
+            notifyItemChanged(index)
+        }
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VideoViewHolder {
@@ -41,6 +64,7 @@ class VideoAdapter(
         val progress = progressMap[video.title] ?: 0
         holder.updateProgress(progress)
         holder.updateFailedState(video.title in failedTransfers)
+        holder.updateNowPlaying(position == currentIndex, currentIsPlaying)
     }
 
     fun updateProgress(videoTitle: String, progress: Int) {
@@ -67,6 +91,7 @@ class VideoAdapter(
         private val removeButton: ImageButton = itemView.findViewById(R.id.remove_button)
         private val progressBar: ProgressBar = itemView.findViewById(R.id.progress_bar)
         private val errorIcon: ImageView = itemView.findViewById(R.id.error_icon)
+        private val nowPlayingIcon: ImageView = itemView.findViewById(R.id.now_playing_icon)
 
         fun bind(
             video: Video,
@@ -106,6 +131,19 @@ class VideoAdapter(
 
         fun updateFailedState(failed: Boolean) {
             errorIcon.visibility = if (failed) View.VISIBLE else View.GONE
+        }
+
+        fun updateNowPlaying(isCurrent: Boolean, isPlaying: Boolean) {
+            if (!isCurrent) {
+                nowPlayingIcon.visibility = View.GONE
+                return
+            }
+            nowPlayingIcon.setImageResource(
+                if (isPlaying) R.drawable.ic_now_playing else R.drawable.ic_now_paused
+            )
+            nowPlayingIcon.contentDescription =
+                if (isPlaying) "Currently playing" else "Queued on blue safe-screen"
+            nowPlayingIcon.visibility = View.VISIBLE
         }
     }
 

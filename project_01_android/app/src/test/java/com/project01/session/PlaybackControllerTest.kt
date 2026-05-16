@@ -349,6 +349,80 @@ class PlaybackControllerTest {
     }
 
     @Test
+    fun `applyFromWire stamps the grace window so a listener fire within it does not revert intent`() = runTest {
+        // Player-side: a wire PLAY_PAUSE command arrives, intent updates to
+        // (1, 0, true). The reconciler then drives ExoPlayer through a
+        // seek-across-items transition out of a pauseAtEndOfMediaItems parked
+        // state, and one of the resulting Player.Listener callbacks reads a
+        // stale snapshot — e.g., currentMediaItemIndex still reporting 0,
+        // playWhenReady still showing the pre-seek false. Without the grace
+        // stamp, onPlayerTransition would treat the stale read as a real
+        // divergence and revert intent. With it, the window suppresses the
+        // feedback so intent stays put and ExoPlayer settles on (1, 0, true).
+        var now = 100L
+        val (controller, _) = buildController(isGameMaster = false, clock = { now })
+
+        controller.applyFromWire(
+            PlaybackCommand(PlaybackCommandType.PLAY_PAUSE, videoIndex = 1, playbackPosition = 0L, playWhenReady = true)
+        )
+
+        // A listener callback fires inside the grace window with stale state
+        // (the player hasn't finished applying the seek yet).
+        now += PlaybackController.COMMAND_GRACE_MS - 1
+        controller.onPlayerTransition(index = 0, positionMs = 9_000L, isPlaying = false)
+
+        val intent = controller.currentIntent()
+        assertEquals(1, intent.videoIndex)
+        assertEquals(0L, intent.positionMs)
+        assertTrue(intent.isPlaying)
+    }
+
+    @Test
+    fun `applyFromSnapshot stamps the grace window`() = runTest {
+        var now = 100L
+        val (controller, _) = buildController(isGameMaster = false, clock = { now })
+
+        controller.applyFromSnapshot(index = 2, positionMs = 5000L, isPlaying = true)
+        now += PlaybackController.COMMAND_GRACE_MS - 1
+        controller.onPlayerTransition(index = 0, positionMs = 0L, isPlaying = false)
+
+        val intent = controller.currentIntent()
+        assertEquals(2, intent.videoIndex)
+        assertEquals(5000L, intent.positionMs)
+        assertTrue(intent.isPlaying)
+    }
+
+    @Test
+    fun `reset clears intent and bookkeeping so a new session starts fresh`() = runTest {
+        // Reproduces the cross-session leak: a previous session left intent
+        // mid-playback (isPlaying = true), so the next session's first Play
+        // press would land in advanceOrResume's "playing → advance to next"
+        // branch and skip the first video. reset() must put everything back
+        // to the defaults a fresh PlaybackController would have.
+        var now = 1000L
+        val (controller, _) = buildController(clock = { now })
+        controller.play(2, positionMs = 5000L)
+        now = 2000L
+        controller.onPlayerTransition(2, 7000L, true)
+
+        controller.reset()
+
+        val intent = controller.currentIntent()
+        assertEquals(0, intent.videoIndex)
+        assertEquals(0L, intent.positionMs)
+        assertFalse(intent.isPlaying)
+        assertEquals(0L, controller.observedPosition())
+
+        // And the first Play press of the new session must play video 0,
+        // not advance to video 1.
+        controller.advanceOrResume(playlistSize = 5, atEndOfCurrent = false)
+        val afterPlay = controller.currentIntent()
+        assertEquals(0, afterPlay.videoIndex)
+        assertEquals(0L, afterPlay.positionMs)
+        assertTrue(afterPlay.isPlaying)
+    }
+
+    @Test
     fun `applyFromSnapshot updates intent without broadcasting`() = runTest {
         val (controller, broadcasts) = buildController()
         broadcasts.clear()

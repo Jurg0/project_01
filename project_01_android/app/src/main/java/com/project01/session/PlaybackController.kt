@@ -25,9 +25,13 @@ data class PlaybackIntent(
  *
  * The [Player.Listener] feeds [onPlayerTransition] for natural transitions
  * (end-of-video pauses via `pauseAtEndOfMediaItems`). Within
- * [COMMAND_GRACE_MS] of an explicit mutator, listener-driven updates are
- * ignored — this is the R2 grace window, kept to avoid the listener fighting
- * the just-issued explicit command on the wire.
+ * [COMMAND_GRACE_MS] of an external intent change (GM mutator OR
+ * wire-received command OR snapshot restore OR drift seek), listener-driven
+ * updates are ignored. ExoPlayer fires multiple listener callbacks during a
+ * seek-across-items transition out of a `pauseAtEndOfMediaItems` parked
+ * state, and any one of them can read a momentarily-stale player state and
+ * overwrite the just-applied intent. The grace window suppresses those
+ * transient feedback events long enough for ExoPlayer to settle.
  *
  * [PlaybackState] on the wire carries only position for drift correction.
  * It never re-commits index or play/pause to intent.
@@ -97,6 +101,11 @@ class PlaybackController(
         }
         _intent.value = next
         lastObservedPositionMs = next.positionMs
+        // Stamp the grace timestamp so listener callbacks fired by the
+        // reconciler's seek+playWhenReady can't revert intent during the
+        // ExoPlayer state transition (especially when crossing out of a
+        // pauseAtEndOfMediaItems parked state into a new media item).
+        lastExplicitCommandAtMs = clock()
     }
 
     /**
@@ -122,6 +131,7 @@ class PlaybackController(
         if (drift <= DRIFT_THRESHOLD_MS) return null
         lastObservedPositionMs = state.playbackPosition
         _intent.value = current.copy(positionMs = state.playbackPosition)
+        lastExplicitCommandAtMs = clock()
         return state.playbackPosition
     }
 
@@ -129,6 +139,21 @@ class PlaybackController(
     fun applyFromSnapshot(index: Int, positionMs: Long, isPlaying: Boolean) {
         _intent.value = PlaybackIntent(index, positionMs, isPlaying)
         lastObservedPositionMs = positionMs
+        lastExplicitCommandAtMs = clock()
+    }
+
+    /**
+     * Reset every piece of state back to its initial value. Called at
+     * session-end so the next session starts at PlaybackIntent() rather
+     * than inheriting `isPlaying = true` (or a stale position) from the
+     * previous session — otherwise the first Play press lands in the
+     * "playing → advance to next" branch of [advanceOrResume] and skips
+     * over the first video.
+     */
+    fun reset() {
+        _intent.value = PlaybackIntent()
+        lastObservedPositionMs = 0L
+        lastExplicitCommandAtMs = 0L
     }
 
     /**

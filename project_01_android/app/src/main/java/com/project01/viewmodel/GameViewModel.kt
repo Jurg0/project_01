@@ -141,6 +141,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         repository.snapshotManager.clearSnapshot()
         repository.updatePlayers(emptyList())
         repository.setGameStarted(false)
+        playbackController.reset()
         if (remoteInitiated) {
             // Remote end (GM kicked us): wipe local session-specific state so the
             // lobby starts clean. GM-initiated end keeps the playlist so the host

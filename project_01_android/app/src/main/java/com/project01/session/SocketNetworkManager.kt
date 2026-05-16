@@ -5,8 +5,6 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.OutputStream
@@ -33,16 +31,20 @@ class SocketNetworkManager(val port: Int = 8888) : NetworkManager {
     private val _events = MutableSharedFlow<NetworkEvent>()
     override val events: Flow<NetworkEvent> = _events.asSharedFlow()
 
-    // Serializes all writes to socket OutputStreams. Without it, concurrent broadcasts
-    // (e.g. periodic PlaybackState + a manual command) can interleave bytes inside the
-    // 4-byte-length-prefixed framing and corrupt every message caught in the race.
-    private val writeMutex = Mutex()
+    // Single-threaded dispatcher for every outbound write. A plain Mutex over
+    // the multi-threaded Dispatchers.IO pool was not enough: two coroutines
+    // launched in order from Main land on different IO worker threads and
+    // race for the lock, so wire-order ended up being decided by CPU
+    // scheduling instead of caller-order. With one worker, submissions form
+    // a FIFO queue — wire-order matches the order broadcast() was called,
+    // which is what two consecutive PlaybackCommand broadcasts need.
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val sendDispatcher = Dispatchers.IO.limitedParallelism(1)
 
-    private suspend fun writeFrame(stream: OutputStream, bytes: ByteArray) {
-        writeMutex.withLock {
-            stream.write(bytes)
-            stream.flush()
-        }
+    /** Blocking I/O. Must run on [sendDispatcher]. */
+    private fun writeFrame(stream: OutputStream, bytes: ByteArray) {
+        stream.write(bytes)
+        stream.flush()
     }
 
     override fun startServer() {
@@ -81,12 +83,14 @@ class SocketNetworkManager(val port: Int = 8888) : NetworkManager {
             while (isActive) {
                 delay(HEARTBEAT_INTERVAL_MS)
                 val heartbeatBytes = MessageEnvelope.encode(HeartbeatMsg())
-                val snapshot = clientOutputStreams.entries.toList()
-                snapshot.forEach { (address, stream) ->
-                    try {
-                        writeFrame(stream, heartbeatBytes)
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Heartbeat failed for $address", e)
+                withContext(sendDispatcher) {
+                    val snapshot = clientOutputStreams.entries.toList()
+                    snapshot.forEach { (address, stream) ->
+                        try {
+                            writeFrame(stream, heartbeatBytes)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Heartbeat failed for $address", e)
+                        }
                     }
                 }
                 val now = System.currentTimeMillis()
@@ -130,14 +134,18 @@ class SocketNetworkManager(val port: Int = 8888) : NetworkManager {
             var outputStream: OutputStream? = null
             var inputStream: DataInputStream? = null
             try {
-                outputStream = client.getOutputStream()
-                client.inetAddress.hostAddress?.let { address ->
-                    clientOutputStreams[address] = outputStream
+                val os = client.getOutputStream()
+                outputStream = os
+                val address = client.inetAddress.hostAddress
+                if (address != null) {
+                    clientOutputStreams[address] = os
                     if (isServer) {
                         val nonce = PasswordHasher.generateNonce()
                         clientNonces[address] = nonce
                         val challengeBytes = MessageEnvelope.encode(PasswordChallenge(nonce))
-                        writeFrame(outputStream, challengeBytes)
+                        withContext(sendDispatcher) {
+                            writeFrame(os, challengeBytes)
+                        }
                     }
                     _events.emit(NetworkEvent.ClientConnected(address))
                 }
@@ -167,33 +175,44 @@ class SocketNetworkManager(val port: Int = 8888) : NetworkManager {
 
     override suspend fun broadcast(data: GameMessage) {
         val bytes = MessageEnvelope.encode(data)
-        withContext(Dispatchers.IO) {
+        val failures = mutableListOf<Pair<String, Exception>>()
+        withContext(sendDispatcher) {
             val snapshot = clientOutputStreams.entries.toList()
             snapshot.forEach { (address, stream) ->
                 try {
                     writeFrame(stream, bytes)
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error broadcasting to $address", e)
                     clientOutputStreams.remove(address)
                     clients.remove(address)?.close()
-                    _events.emit(NetworkEvent.Error(e, "broadcast→$address"))
+                    failures.add(address to e)
                 }
             }
+        }
+        // Emit error events outside the send dispatcher; SharedFlow.emit can
+        // suspend on a slow subscriber and we don't want to stall the single
+        // sender thread (and with it every other in-flight broadcast).
+        failures.forEach { (address, e) ->
+            Log.e(TAG, "Error broadcasting to $address", e)
+            _events.emit(NetworkEvent.Error(e, "broadcast→$address"))
         }
     }
 
     override suspend fun sendTo(address: String, data: GameMessage) {
         val stream = clientOutputStreams[address] ?: return
         val bytes = MessageEnvelope.encode(data)
-        withContext(Dispatchers.IO) {
+        var failure: Exception? = null
+        withContext(sendDispatcher) {
             try {
                 writeFrame(stream, bytes)
             } catch (e: Exception) {
-                Log.e(TAG, "Error sending to $address", e)
                 clientOutputStreams.remove(address)
                 clients.remove(address)?.close()
-                _events.emit(NetworkEvent.Error(e, "sendTo→$address"))
+                failure = e
             }
+        }
+        failure?.let { e ->
+            Log.e(TAG, "Error sending to $address", e)
+            _events.emit(NetworkEvent.Error(e, "sendTo→$address"))
         }
     }
 

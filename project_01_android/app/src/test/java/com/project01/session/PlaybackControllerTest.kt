@@ -237,13 +237,11 @@ class PlaybackControllerTest {
 
     @Test
     fun `stale drift state arriving after a play-pause command does not revert intent`() = runTest {
-        // Reproduces the wire-order race the user observed: GM was playing
-        // video 0, hits Play (advance + pause on video 1). The
-        // broadcastDriftSync coroutine and the commitAndBroadcast coroutine
-        // both launch independently — if the command wins the IO writeMutex,
-        // the player receives PlaybackCommand(1, 0, false) first and the
-        // stale PlaybackState(0, posN, true) second. Without ignoring the
-        // disagreeing drift, the player would resume playing video 0.
+        // Defends against a class of wire-order race: a stale drift state
+        // arriving after a fresh play-pause command must not revert intent.
+        // The single-threaded send dispatcher in SocketNetworkManager now
+        // makes the on-wire order match caller-order, but ignoring the
+        // disagreement is a cheap second line of defense.
         val (controller, _) = buildController(isGameMaster = false)
         controller.applyFromWire(
             PlaybackCommand(PlaybackCommandType.PLAY_PAUSE, videoIndex = 1, playbackPosition = 0L, playWhenReady = false)

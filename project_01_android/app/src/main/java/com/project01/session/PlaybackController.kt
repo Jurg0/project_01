@@ -101,10 +101,16 @@ class PlaybackController(
 
     /**
      * Player-side drift correction. PlaybackState carries only position for
-     * routine drift sync. Returns the position to seek to if drift exceeds
-     * the threshold, else null. If the state's index or playing flag disagree
-     * with intent, defer to [applyFromWire] — but in normal operation this
-     * shouldn't happen because PlaybackCommand precedes any divergent state.
+     * routine drift sync. When drift exceeds the threshold, update
+     * `intent.positionMs` — the StateFlow emission drives the reconciler's
+     * seek. Returns the corrected position (or null if no correction needed)
+     * for callers/tests that want to introspect the decision; production
+     * callers can discard it since the seek happens via the intent flow.
+     *
+     * If the state's index or playing flag disagree with intent, defer to
+     * [applyFromWire]. In normal operation this shouldn't happen because
+     * PlaybackCommand precedes any divergent state, but the fallback covers
+     * a dropped command.
      */
     fun applyDriftCorrection(state: PlaybackState): Long? {
         val current = _intent.value
@@ -122,6 +128,7 @@ class PlaybackController(
         val drift = Math.abs(state.playbackPosition - lastObservedPositionMs)
         if (drift <= DRIFT_THRESHOLD_MS) return null
         lastObservedPositionMs = state.playbackPosition
+        _intent.value = current.copy(positionMs = state.playbackPosition)
         return state.playbackPosition
     }
 

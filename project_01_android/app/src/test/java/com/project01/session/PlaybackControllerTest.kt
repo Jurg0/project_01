@@ -182,10 +182,11 @@ class PlaybackControllerTest {
     }
 
     @Test
-    fun `applyDriftCorrection returns null when within threshold`() = runTest {
+    fun `applyDriftCorrection within threshold returns null and leaves intent unchanged`() = runTest {
         val (controller, _) = buildController()
         controller.play(0, positionMs = 5000L)
         controller.onPlayerTransition(0, 5500L, true)
+        val intentBefore = controller.currentIntent()
 
         // Drift of 200ms is well below threshold
         val seek = controller.applyDriftCorrection(
@@ -193,10 +194,11 @@ class PlaybackControllerTest {
         )
 
         assertNull(seek)
+        assertEquals(intentBefore, controller.currentIntent())
     }
 
     @Test
-    fun `applyDriftCorrection returns position when drift exceeds threshold`() = runTest {
+    fun `applyDriftCorrection over threshold updates intent positionMs so reconciler seeks`() = runTest {
         val (controller, _) = buildController()
         controller.play(0, positionMs = 5000L)
 
@@ -204,7 +206,15 @@ class PlaybackControllerTest {
             PlaybackState(videoIndex = 0, playbackPosition = 10_000L, playWhenReady = true)
         )
 
+        // Return value still indicates the corrected position for callers/tests
+        // that want to introspect the decision.
         assertEquals(10_000L, seek)
+        // The real-world fix: intent must emit so PlaybackViewDelegate's
+        // reconciler picks up the seek. Index and isPlaying are untouched.
+        val intent = controller.currentIntent()
+        assertEquals(0, intent.videoIndex)
+        assertEquals(10_000L, intent.positionMs)
+        assertTrue(intent.isPlaying)
     }
 
     @Test

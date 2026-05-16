@@ -218,17 +218,45 @@ class PlaybackControllerTest {
     }
 
     @Test
-    fun `applyDriftCorrection falls back to applyFromWire when state disagrees with intent`() = runTest {
+    fun `applyDriftCorrection ignores state that disagrees with current intent`() = runTest {
         val (controller, _) = buildController()
         controller.play(0)
 
-        controller.applyDriftCorrection(
+        val seek = controller.applyDriftCorrection(
             PlaybackState(videoIndex = 2, playbackPosition = 1000L, playWhenReady = false)
         )
 
+        // PlaybackCommand is the only authority on videoIndex/isPlaying; a
+        // disagreeing drift state means a stale broadcast raced a newer
+        // command and must be ignored.
+        assertNull(seek)
         val intent = controller.currentIntent()
-        assertEquals(2, intent.videoIndex)
-        assertEquals(1000L, intent.positionMs)
+        assertEquals(0, intent.videoIndex)
+        assertTrue(intent.isPlaying)
+    }
+
+    @Test
+    fun `stale drift state arriving after a play-pause command does not revert intent`() = runTest {
+        // Reproduces the wire-order race the user observed: GM was playing
+        // video 0, hits Play (advance + pause on video 1). The
+        // broadcastDriftSync coroutine and the commitAndBroadcast coroutine
+        // both launch independently — if the command wins the IO writeMutex,
+        // the player receives PlaybackCommand(1, 0, false) first and the
+        // stale PlaybackState(0, posN, true) second. Without ignoring the
+        // disagreeing drift, the player would resume playing video 0.
+        val (controller, _) = buildController(isGameMaster = false)
+        controller.applyFromWire(
+            PlaybackCommand(PlaybackCommandType.PLAY_PAUSE, videoIndex = 1, playbackPosition = 0L, playWhenReady = false)
+        )
+
+        val seek = controller.applyDriftCorrection(
+            PlaybackState(videoIndex = 0, playbackPosition = 5000L, playWhenReady = true)
+        )
+
+        assertNull(seek)
+        val intent = controller.currentIntent()
+        assertEquals(1, intent.videoIndex)
+        assertEquals(0L, intent.positionMs)
         assertFalse(intent.isPlaying)
     }
 

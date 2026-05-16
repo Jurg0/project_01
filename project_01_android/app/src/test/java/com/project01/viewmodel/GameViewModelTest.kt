@@ -401,18 +401,20 @@ class GameViewModelTest {
     }
 
     @Test
-    fun `handleGameSyncEvent DataReceived with PlaybackState falls back to applyFromWire when state disagrees with intent`() {
-        // Default intent is (0, 0, false); a state for a different index + playing
-        // should be treated as a divergent command, not a drift correction.
+    fun `handleGameSyncEvent DataReceived with PlaybackState ignores state that disagrees with intent`() {
+        // Default intent is (0, 0, false); a state disagreeing on videoIndex
+        // and playing flag is a stale drift broadcast that raced a newer
+        // command. PlaybackCommand is the only authority on those fields, so
+        // the state is dropped and intent stays at its default.
         val state = PlaybackState(videoIndex = 1, playbackPosition = 5000L, playWhenReady = true)
         val event = NetworkEvent.DataReceived(state, "192.168.1.5")
 
         gameSyncEventLiveData.value = event
 
         val intent = gameViewModel.playbackController.currentIntent()
-        assertEquals(1, intent.videoIndex)
-        assertEquals(5000L, intent.positionMs)
-        assertTrue(intent.isPlaying)
+        assertEquals(0, intent.videoIndex)
+        assertEquals(0L, intent.positionMs)
+        assertFalse(intent.isPlaying)
     }
 
     // --- onCleared tests ---

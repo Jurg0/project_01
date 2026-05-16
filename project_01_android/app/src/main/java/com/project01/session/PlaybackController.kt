@@ -107,23 +107,16 @@ class PlaybackController(
      * for callers/tests that want to introspect the decision; production
      * callers can discard it since the seek happens via the intent flow.
      *
-     * If the state's index or playing flag disagree with intent, defer to
-     * [applyFromWire]. In normal operation this shouldn't happen because
-     * PlaybackCommand precedes any divergent state, but the fallback covers
-     * a dropped command.
+     * If the state disagrees with intent on videoIndex or playing flag, ignore
+     * it. PlaybackCommand is the only authority on those fields, and a
+     * disagreeing state on the wire means a stale drift broadcast raced a
+     * newer command (the GM's drift-sync and command broadcasts are queued
+     * via separate scope.launches and can be reordered by the IO mutex).
      */
     fun applyDriftCorrection(state: PlaybackState): Long? {
         val current = _intent.value
         if (state.videoIndex != current.videoIndex || state.playWhenReady != current.isPlaying) {
-            applyFromWire(
-                PlaybackCommand(
-                    PlaybackCommandType.PLAY_PAUSE,
-                    state.videoIndex,
-                    state.playbackPosition,
-                    state.playWhenReady,
-                )
-            )
-            return state.playbackPosition
+            return null
         }
         val drift = Math.abs(state.playbackPosition - lastObservedPositionMs)
         if (drift <= DRIFT_THRESHOLD_MS) return null
@@ -174,10 +167,13 @@ class PlaybackController(
         if (!isGameMaster()) return
         val current = _intent.value
         if (!current.isPlaying) return
+        // Snapshot before scope.launch so the broadcast reflects one atomic
+        // point-in-time. Reading lastObservedPositionMs inside the launch
+        // body lets an explicit mutator slip in between and produce a
+        // PlaybackState that mixes the old videoIndex with the new position.
+        val message = PlaybackState(current.videoIndex, lastObservedPositionMs, true)
         scope.launch {
-            gameSync.broadcast(
-                PlaybackState(current.videoIndex, lastObservedPositionMs, true)
-            )
+            gameSync.broadcast(message)
         }
     }
 

@@ -4,7 +4,7 @@ Forward-looking refactor work. Ranked by reliability impact (top) then hygiene (
 
 The recent round of playback / sync bugs (drift filter dropping commands, GM/player index disagreement, white pulsing, etc.) shared a common root: too many parallel state representations and too much logic concentrated in `MainActivity` + `GameViewModel`. This list is the recovery plan.
 
-> **Session-handover note:** Items R1, R2, R5, R6, R7, R8 are landed. Items R3, R4, R9 are open. Each open item below carries enough context — files, line ranges, design decisions already made, test guidance — to resume cold in a fresh session.
+> **Session-handover note:** Items R1, R2, R3, R5, R6, R7, R8 are landed. Items R4 and R9 are open. Each open item below carries enough context — files, line ranges, design decisions already made, test guidance — to resume cold in a fresh session.
 
 ---
 
@@ -38,19 +38,15 @@ Deleted from `GameViewModel`: the `currentVideoIndex/Position/IsPlaying` fields,
 
 ## Code health (medium impact)
 
-### ◐ R3 — Split `GameViewModel`
+### ● R3 — Split `GameViewModel`
 
-Landing one extraction per commit. Current status:
+Done across three commits:
 
-- `PlaybackController` — landed in R1.
-- `FileTransferOrchestrator` — **landed.** `requestFileTransfer`, `handleFileTransferRequest`, `onFileTransferSuccess`, the `handleVideoList` file-resolve loop, and the `receivedVideoFiles` set all moved to `session/FileTransferOrchestrator.kt`. `GameViewModel.handleVideoList` is now a 10-line shim. 10 focused unit tests in `FileTransferOrchestratorTest`.
-- `SessionController` — open. Should own `handleConnectionInfo`, `handlePasswordChallenge`, `handlePasswordMessage`, `pushInitialStateTo`, `createGame`, `joinGame`, `endGame`, `handleEndGame`, plus the `gamePassword`/`pendingPassword`/`pendingNonce`/`localPlayerName`/`player` (role-tracking) state and the reconnect host/port memory. After this lands, `GameViewModel` keeps: LiveData exposure, observer wiring, Bluetooth presence, snapshot orchestration glue, periodic status broadcast, playlist editing.
+- **R1** — `PlaybackController` (single source of truth for playback state).
+- **R3a** — `FileTransferOrchestrator` owns `requestFileTransfer`, `handleFileTransferRequest`, `onFileTransferSuccess`, the `handleVideoList` file-resolve loop, and the `receivedVideoFiles` set. `GameViewModel.handleVideoList` shrank to a 10-line shim. 10 focused tests in `FileTransferOrchestratorTest`.
+- **R3b** — `SessionController` owns `handleConnectionInfo`, the password handshake (`handlePasswordChallenge` / `handlePasswordMessage` / `handlePasswordResponseMessage`), `pushInitialStateTo`, `createGame`, `connectToPlayer`, `joinGame`, `endGame`, `handleEndGame`, `retryConnection`, the role-tracking `player` field, and the reconnect host/port memory. `connectionState` and `passwordVerified` LiveData moved with it; `GameViewModel` re-exposes them as proxies. Communication with `GameViewModel` is via `onSessionStarted(isHost)` and `onSessionEnded(remoteInitiated)` callbacks plus `handleClientDisconnected()` returning a boolean for GM-side roster handling. 23 focused tests in `SessionControllerTest`.
 
-**Migration approach:** extract one at a time, keep `GameViewModel` as a facade that delegates to the new classes. Move one method at a time, run tests after each.
-
-**Tests:** the extracted classes get focused unit tests; `GameViewModelTest` shrinks correspondingly.
-
-**Estimated scope:** several hours. Splittable across multiple sessions per-class.
+**Decision:** `GameViewModel` stays as the View-facing facade. It still owns: LiveData proxying, player-roster management (PlayerNameMessage / PlayerStatusMessage handlers + add/remove on Client(Dis)Connected for GM), Bluetooth presence prompt, snapshot orchestration glue, periodic status broadcast, named playlist + playlist editing, advanced commands (screen/torch/lights), and `NetworkEvent.Error` → `UiError.Recoverable`. Net result: `GameViewModel` is 380 lines (down from ~750); the heavy logic now lives in four focused classes (PlaybackController, FileTransferOrchestrator, SessionController, GameRepository).
 
 ### ○ R4 — Split `MainActivity`
 
@@ -99,7 +95,6 @@ Verify after R1–R4 land that the layer diagram and conventions in `CLAUDE.md` 
 
 | Item | Status | Depends on | Rough scope |
 |------|--------|------------|-------------|
-| R3   | ◐      | R1         | several hours, splittable (FileTransferOrchestrator landed; SessionController open) |
 | R4   | ○      | R1, R3     | several hours, splittable |
 | R9   | ○      | R1–R4      | small sweep |
 

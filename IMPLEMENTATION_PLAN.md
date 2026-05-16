@@ -4,83 +4,23 @@ Forward-looking refactor work. Ranked by reliability impact (top) then hygiene (
 
 The recent round of playback / sync bugs (drift filter dropping commands, GM/player index disagreement, white pulsing, etc.) shared a common root: too many parallel state representations and too much logic concentrated in `MainActivity` + `GameViewModel`. This list is the recovery plan.
 
-> **Session-handover note:** Items R2, R5, R6, R7, R8 are landed. Items R1, R3, R4, R9 are open. Each open item below carries enough context — files, line ranges, design decisions already made, test guidance — to resume cold in a fresh session.
+> **Session-handover note:** Items R1, R2, R5, R6, R7, R8 are landed. Items R3, R4, R9 are open. Each open item below carries enough context — files, line ranges, design decisions already made, test guidance — to resume cold in a fresh session.
 
 ---
 
 ## Reliability (highest impact)
 
-### ○ R1 — Single source of truth for playback state
+### ● R1 — Single source of truth for playback state
 
-**Problem.** The GM keeps three parallel views of playback state:
+Extracted into `session/PlaybackController.kt`. `PlaybackIntent(videoIndex, positionMs, isPlaying)` is the single source of truth, exposed as a `StateFlow`. GM-side mutators (`play`, `pause`, `previous`, `advanceOrResume`) update intent and broadcast `PlaybackCommand`. Player-side `applyFromWire` updates intent without re-broadcasting. `applyDriftCorrection` handles incoming `PlaybackState` purely for position correction; falls back to `applyFromWire` if state disagrees with intent (defensive — shouldn't happen in normal operation).
 
-- ExoPlayer (`player.currentMediaItemIndex`, `player.currentPosition`, `player.playWhenReady`)
-- `GameViewModel` fields: `currentVideoIndex`, `currentPlaybackPosition`, `currentIsPlaying` (declared at `GameViewModel.kt:59-61`)
-- The wire (`PlaybackState` for periodic drift sync, `PlaybackCommand` for explicit actions)
+`MainActivity.initializePlayer` now runs a `repeatOnLifecycle(STARTED)` coroutine that collects `playbackController.intent` and reconciles ExoPlayer (seek when index or position diverges, set `playWhenReady`, toggle surface visibility). The ExoPlayer `Player.Listener` feeds `controller.onPlayerTransition(index, position, isPlaying)`, which only updates intent + broadcasts when ExoPlayer's state disagrees with intent and we're outside the R2 grace window — natural end-of-video pauses still propagate.
 
-Every recent sync bug was these three disagreeing:
+Deleted from `GameViewModel`: the `currentVideoIndex/Position/IsPlaying` fields, `commandPlayback`, `broadcastPlaybackState`, `applyPlaybackState`, the `_playbackCommand` and `_showVideo` LiveDatas, and the `PLAYBACK_SYNC_INTERVAL_MS`/`PLAYBACK_DRIFT_THRESHOLD_MS`/`COMMAND_GRACE_MS` companion constants (now on `PlaybackController`). `MainActivity.handlePlaybackCommand` and its `playbackCommand`/`showVideo` observers are gone — the reconciliation coroutine is the only path that touches ExoPlayer.
 
-- White pulsing — periodic `PlaybackState` re-emitted `_showVideo=true` even when nothing changed.
-- Previous-button desync — `seekToPreviousMediaItem()` interacted unpredictably with `pauseAtEndOfMediaItems`; the broadcast captured the index *after* ExoPlayer's async state transition.
-- Video-shows-but-paused — `applyPlaybackState`'s drift filter dropped `PlaybackCommand` emission when drift was small but `playWhenReady` had transitioned.
-- Two broadcasts per button press — the `Player.Listener` and the explicit handler both broadcast; order on the wire is non-deterministic (R2).
+**Decision:** `pause()` writes `lastObservedPositionMs` into the broadcast intent so clients reconcile to the GM's actual paused position, not the stale commanded one. `advanceOrResume(playlistSize, atEndOfCurrent)` takes the `atEnd` flag from MainActivity (ExoPlayer is the only authority on item duration) — the controller does not track ExoPlayer-only state.
 
-The right model: **ViewModel owns the intended state. ExoPlayer (on both GM and player) is driven from it. The wire carries the intended state. The Player.Listener only feeds a position counter for periodic drift correction — never the index, never the play/pause intent.**
-
-**Proposed design.**
-
-Create a new class `PlaybackController` (location: `app/src/main/java/com/project01/session/PlaybackController.kt` or under `viewmodel/`):
-
-```kotlin
-data class PlaybackIntent(
-    val videoIndex: Int,
-    val positionMs: Long,
-    val isPlaying: Boolean,
-)
-
-class PlaybackController(
-    private val gameSync: GameSync,
-    private val scope: CoroutineScope,
-) {
-    private val _intent = MutableStateFlow(PlaybackIntent(0, 0L, false))
-    val intent: StateFlow<PlaybackIntent> = _intent
-
-    // GM-side mutators. Each updates _intent and broadcasts a PlaybackCommand.
-    fun play(index: Int, positionMs: Long = 0L)
-    fun pause()
-    fun previous(playlistSize: Int)  // computes target index, calls play(...)
-    fun advance(playlistSize: Int)   // pause + seek to next item start
-
-    // Player-side: called by GameViewModel when a PlaybackCommand arrives.
-    fun applyFromWire(command: PlaybackCommand)
-
-    // Periodic drift sync (GM only). Reads ExoPlayer's actual position and
-    // broadcasts a PlaybackState containing only the position; client uses
-    // only for drift correction, never to change index or playing/paused.
-    fun broadcastDriftSync(currentExoPosition: Long)
-}
-```
-
-**Migration plan (suggested order):**
-
-1. Create `PlaybackController` with the mutators. Initially have the mutators *also* update the old `GameViewModel.currentVideoIndex/Position/IsPlaying` fields (mirror), so nothing else breaks yet.
-2. Move the explicit broadcast logic out of `GameViewModel.commandPlayback` (currently at `GameViewModel.kt:625-637`) into `PlaybackController.play/pause`. Make `commandPlayback` call into the controller.
-3. Replace `MainActivity.onGmPrevious` / `onGmPlayNext` (currently at `MainActivity.kt:191-238`) to call `controller.previous(...)` / `controller.advance(...)` / `controller.play(...)` instead of touching ExoPlayer directly. ExoPlayer becomes a downstream observer of `controller.intent`.
-4. In `MainActivity.initializePlayer` (around `MainActivity.kt:716`), add a coroutine that collects `controller.intent` and reconciles ExoPlayer state (seek + playWhenReady) only when intent differs from ExoPlayer's current state.
-5. In `GameViewModel.handleGameSyncEvent`'s `PlaybackCommand` branch (currently posts to `_playbackCommand` LiveData at line ~190), route it through `controller.applyFromWire(...)`. The MainActivity coroutine in step 4 then drives ExoPlayer for both received-from-wire and locally-initiated changes — single code path.
-6. Drop the old fields and the `_playbackCommand` LiveData once nothing reads them.
-7. Periodic sync (currently `GameViewModel.startPeriodicPlaybackSync` at `GameViewModel.kt:158-170`) moves to `PlaybackController.broadcastDriftSync` and takes ExoPlayer's actual position rather than the cached field.
-
-**Tests:**
-- New `PlaybackControllerTest` — unit tests for `play/pause/previous/advance` mutators, intent updates, broadcast envelope contents.
-- Existing `GameViewModelTest`: the playback-related tests collapse considerably. Many can move to `PlaybackControllerTest`.
-
-**Acceptance:**
-- Pressing Prev/Play/Next on GM updates `controller.intent` *and* broadcasts a single `PlaybackCommand`. ExoPlayer state reconciles from intent — no direct ExoPlayer calls in button handlers.
-- Player receiving `PlaybackCommand` routes through the same controller; same reconciliation path drives its ExoPlayer.
-- Manual test: rapid Prev/Next/Light presses don't produce mid-state visual artifacts on either device.
-
-**Estimated scope:** multi-hour. Better as its own focused session. Commit incrementally so partial state can be reverted.
+**Files modified:** `session/PlaybackController.kt` (new), `viewmodel/GameViewModel.kt`, `MainActivity.kt`, `session/PlaybackControllerTest.kt` (new, 22 tests), `viewmodel/GameViewModelTest.kt` (3 tests rewritten against intent instead of LiveData; the `broadcastPlaybackState` test removed). 141 unit tests pass.
 
 ---
 
@@ -164,7 +104,6 @@ Verify after R1–R4 land that the layer diagram and conventions in `CLAUDE.md` 
 
 | Item | Status | Depends on | Rough scope |
 |------|--------|------------|-------------|
-| R1   | ○      | —          | multi-hour  |
 | R3   | ○      | R1         | several hours, splittable |
 | R4   | ○      | R1, R3     | several hours, splittable |
 | R9   | ○      | R1–R4      | small sweep |

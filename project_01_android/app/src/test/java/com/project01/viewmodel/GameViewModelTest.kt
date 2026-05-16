@@ -284,19 +284,17 @@ class GameViewModelTest {
     // --- onVideoSelected tests ---
 
     @Test
-    fun `onVideoSelected emits PLAY_PAUSE command with correct video index`() {
+    fun `onVideoSelected updates playback intent to play the selected video`() {
         val video1 = Video(Uri.parse("content://video1"), "Video 1")
         val video2 = Video(Uri.parse("content://video2"), "Video 2")
         videosLiveData.value = listOf(video1, video2)
 
-        var emitted: PlaybackCommand? = null
-        gameViewModel.playbackCommand.observeForever { emitted = it }
-
         gameViewModel.onVideoSelected(video2)
 
-        assertNotNull(emitted)
-        assertEquals(PlaybackCommandType.PLAY_PAUSE, emitted!!.type)
-        assertEquals(1, emitted!!.videoIndex)
+        val intent = gameViewModel.playbackController.currentIntent()
+        assertEquals(1, intent.videoIndex)
+        assertEquals(0L, intent.positionMs)
+        assertTrue(intent.isPlaying)
     }
 
     // --- Network event handling tests ---
@@ -372,17 +370,16 @@ class GameViewModelTest {
     }
 
     @Test
-    fun `handleGameSyncEvent DataReceived with PlaybackCommand emits playback command`() {
-        val command = PlaybackCommand(PlaybackCommandType.NEXT)
+    fun `handleGameSyncEvent DataReceived with PlaybackCommand updates intent`() {
+        val command = PlaybackCommand(PlaybackCommandType.PLAY_PAUSE, videoIndex = 2, playbackPosition = 3000L, playWhenReady = true)
         val event = NetworkEvent.DataReceived(command, "192.168.1.5")
-
-        var emitted: PlaybackCommand? = null
-        gameViewModel.playbackCommand.observeForever { emitted = it }
 
         gameSyncEventLiveData.value = event
 
-        assertNotNull(emitted)
-        assertEquals(PlaybackCommandType.NEXT, emitted!!.type)
+        val intent = gameViewModel.playbackController.currentIntent()
+        assertEquals(2, intent.videoIndex)
+        assertEquals(3000L, intent.positionMs)
+        assertTrue(intent.isPlaying)
     }
 
     @Test
@@ -400,33 +397,18 @@ class GameViewModelTest {
     }
 
     @Test
-    fun `handleGameSyncEvent DataReceived with PlaybackState emits playback command and shows video`() {
+    fun `handleGameSyncEvent DataReceived with PlaybackState falls back to applyFromWire when state disagrees with intent`() {
+        // Default intent is (0, 0, false); a state for a different index + playing
+        // should be treated as a divergent command, not a drift correction.
         val state = PlaybackState(videoIndex = 1, playbackPosition = 5000L, playWhenReady = true)
         val event = NetworkEvent.DataReceived(state, "192.168.1.5")
 
-        var emittedCommand: PlaybackCommand? = null
-        var showVideoCalled = false
-        gameViewModel.playbackCommand.observeForever { emittedCommand = it }
-        gameViewModel.showVideo.observeForever { showVideoCalled = true }
-
         gameSyncEventLiveData.value = event
 
-        assertNotNull(emittedCommand)
-        assertEquals(PlaybackCommandType.PLAY_PAUSE, emittedCommand!!.type)
-        assertEquals(1, emittedCommand!!.videoIndex)
-        assertEquals(5000L, emittedCommand!!.playbackPosition)
-        assertTrue(emittedCommand!!.playWhenReady)
-        assertTrue(showVideoCalled)
-    }
-
-    // --- broadcastPlaybackState tests ---
-
-    @Test
-    fun `broadcastPlaybackState does not broadcast when not game master`() = runTest {
-        // By default, isGameMaster() returns false
-        gameViewModel.broadcastPlaybackState(1000L, true, 0)
-
-        verify(mockGameSync, never()).broadcast(any())
+        val intent = gameViewModel.playbackController.currentIntent()
+        assertEquals(1, intent.videoIndex)
+        assertEquals(5000L, intent.positionMs)
+        assertTrue(intent.isPlaying)
     }
 
     // --- onCleared tests ---

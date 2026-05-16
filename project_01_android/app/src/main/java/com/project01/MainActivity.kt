@@ -22,7 +22,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.Observer
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
@@ -32,11 +35,14 @@ import com.project01.databinding.ActivityMainBinding
 import com.project01.p2p.ConnectionService
 import com.project01.session.CreateGameDialogFragment
 import com.project01.session.JoinGameDialogFragment
+import com.project01.session.PlaybackIntent
 import com.project01.session.SnapshotManager
 import com.project01.session.Video
 import com.project01.ui.ConnectionStatus
 import com.project01.ui.UiError
 import com.project01.viewmodel.GameViewModel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
 
@@ -45,6 +51,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var playerAdapter: PlayerAdapter
     private lateinit var videoAdapter: VideoAdapter
     private var exoPlayer: ExoPlayer? = null
+    private var intentReconcileJob: Job? = null
     private var isScreenOff = false
     private var isTorchOn = false
     private var isGmOverlayVisible = false
@@ -196,41 +203,24 @@ class MainActivity : AppCompatActivity() {
         val player = exoPlayer ?: return
         val count = player.mediaItemCount
         if (count == 0) return
-        // Compute the target index explicitly. seekToPreviousMediaItem() interacts
-        // unpredictably with pauseAtEndOfMediaItems when the player is parked at
-        // the end of an item — the GM's local index and the broadcasted index
-        // could end up disagreeing, desyncing the player device.
-        val targetIndex = (player.currentMediaItemIndex - 1).coerceAtLeast(0)
-        player.seekTo(targetIndex, 0)
-        player.playWhenReady = true
-        binding.playerView.videoSurfaceView?.visibility = View.VISIBLE
-        gameViewModel.commandPlayback(targetIndex, 0, true)
+        // Compute the target index from the controller's intent (the source of
+        // truth) rather than ExoPlayer's currentMediaItemIndex —
+        // seekToPreviousMediaItem() interacts unpredictably with
+        // pauseAtEndOfMediaItems when the player is parked at the end of an
+        // item, so we never lean on ExoPlayer for the target.
+        gameViewModel.playbackController.previous(count)
     }
 
     private fun onGmPlayNext() {
         val player = exoPlayer ?: return
         val count = player.mediaItemCount
         if (count == 0) return
-        val currentIndex = player.currentMediaItemIndex
-        if (player.playWhenReady) {
-            // Playing → pause AND advance to the next item so the blue safe-screen
-            // sits between the current video and the next one.
-            val nextIndex = (currentIndex + 1).coerceAtMost(count - 1)
-            player.seekTo(nextIndex, 0)
-            player.playWhenReady = false
-            gameViewModel.commandPlayback(nextIndex, 0, false)
-        } else {
-            // Paused on blue → start playing. If we're parked at the end of the
-            // current item (pauseAtEndOfMediaItems), advance to the next one first.
-            val duration = player.duration
-            val atEnd = duration > 0 && player.currentPosition >= duration - 500
-            val targetIndex = if (atEnd) (currentIndex + 1).coerceAtMost(count - 1) else currentIndex
-            val targetPosition = if (atEnd || targetIndex != currentIndex) 0L else player.currentPosition
-            player.seekTo(targetIndex, targetPosition)
-            player.playWhenReady = true
-            binding.playerView.videoSurfaceView?.visibility = View.VISIBLE
-            gameViewModel.commandPlayback(targetIndex, targetPosition, true)
-        }
+        // ExoPlayer is the only authority on whether we're parked at the end
+        // of the current item (the controller doesn't track durations), so we
+        // sample it here and hand the flag to the controller.
+        val duration = player.duration
+        val atEnd = duration > 0 && player.currentPosition >= duration - 500
+        gameViewModel.playbackController.advanceOrResume(count, atEnd)
     }
 
     private fun onGmToggleLight() {
@@ -381,10 +371,6 @@ class MainActivity : AppCompatActivity() {
             // Do something with the device info if needed
         })
 
-        gameViewModel.playbackCommand.observe(this, Observer { command ->
-            handlePlaybackCommand(command)
-        })
-
         gameViewModel.passwordVerified.observe(this, Observer { isVerified ->
             if (!isVerified) {
                 Toast.makeText(this, "Incorrect password", Toast.LENGTH_SHORT).show()
@@ -397,13 +383,6 @@ class MainActivity : AppCompatActivity() {
 
         gameViewModel.uiError.observe(this, Observer { error ->
             handleUiError(error)
-        })
-
-        gameViewModel.showVideo.observe(this, Observer { show ->
-            // No flash effect here — it's player-side only (GM doesn't receive its
-            // own PlaybackState broadcasts) and the GM gets explicit flashes on
-            // their own button presses in onGmPrevious / onGmPlayNext.
-            binding.playerView.videoSurfaceView?.visibility = if (show) View.VISIBLE else View.GONE
         })
 
         gameViewModel.requestEnableBluetooth.observe(this, Observer {
@@ -586,23 +565,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun handlePlaybackCommand(command: com.project01.session.PlaybackCommand) {
-        when (command.type) {
-            com.project01.session.PlaybackCommandType.PLAY_PAUSE -> {
-                if (command.videoIndex != -1) {
-                    exoPlayer?.seekTo(command.videoIndex, command.playbackPosition)
-                }
-                exoPlayer?.playWhenReady = command.playWhenReady
-            }
-            com.project01.session.PlaybackCommandType.NEXT -> {
-                exoPlayer?.seekToNextMediaItem()
-            }
-            com.project01.session.PlaybackCommandType.PREVIOUS -> {
-                exoPlayer?.seekToPreviousMediaItem()
-            }
-        }
-    }
-
     private fun showLobby() {
         // In the lobby nobody has a role yet — show playlist edit controls so the
         // user can prepare a playlist for the next session (host or guest).
@@ -712,25 +674,57 @@ class MainActivity : AppCompatActivity() {
 
         exoPlayer?.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
-                if (!isPlaying) {
-                    // Catches the pauseAtEndOfMediaItems case so the blue safe-screen shows
-                    // between videos. Show-on-play is handled by the GM buttons themselves
-                    // so the flash fires immediately on press, not after the buffer.
-                    binding.playerView.videoSurfaceView?.visibility = View.GONE
-                }
-                exoPlayer?.let {
-                    gameViewModel.broadcastPlaybackState(
-                        it.currentPosition,
-                        it.playWhenReady,
-                        it.currentMediaItemIndex
-                    )
-                }
+                val player = exoPlayer ?: return
+                gameViewModel.playbackController.onPlayerTransition(
+                    player.currentMediaItemIndex,
+                    player.currentPosition,
+                    player.playWhenReady,
+                )
             }
         })
+
+        intentReconcileJob?.cancel()
+        intentReconcileJob = lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                gameViewModel.playbackController.intent.collect { intent ->
+                    applyIntentToExoPlayer(intent)
+                }
+            }
+        }
+    }
+
+    /**
+     * Reconcile ExoPlayer against the commanded intent. The collector fires on
+     * any intent change — from GM button presses, wire commands, or snapshot
+     * restore — so this is the single code path that drives ExoPlayer.
+     * StateFlow's structural-equality dedup collapses no-op re-emissions.
+     */
+    private fun applyIntentToExoPlayer(intent: PlaybackIntent) {
+        val player = exoPlayer ?: return
+        if (intent.videoIndex in 0 until player.mediaItemCount) {
+            // Seek only when index changed or position diverges materially.
+            // Avoids fighting ExoPlayer's natural advance within an item.
+            val indexChanged = player.currentMediaItemIndex != intent.videoIndex
+            val positionDelta = Math.abs(player.currentPosition - intent.positionMs)
+            if (indexChanged || positionDelta > SEEK_TOLERANCE_MS) {
+                player.seekTo(intent.videoIndex, intent.positionMs)
+            }
+        }
+        player.playWhenReady = intent.isPlaying
+        binding.playerView.videoSurfaceView?.visibility =
+            if (intent.isPlaying) View.VISIBLE else View.GONE
     }
 
     private fun releasePlayer() {
+        intentReconcileJob?.cancel()
+        intentReconcileJob = null
         exoPlayer?.release()
         exoPlayer = null
+    }
+
+    companion object {
+        /** Tolerance for "this is the same position" — avoids re-seeking on every
+         *  intent emission when only the position field updated marginally. */
+        private const val SEEK_TOLERANCE_MS = 500L
     }
 }

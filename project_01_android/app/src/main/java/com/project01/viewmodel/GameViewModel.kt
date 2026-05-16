@@ -42,23 +42,19 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     private val _uiError = MutableLiveData<UiError>()
     val uiError: LiveData<UiError> = _uiError
 
-    private val _showVideo = MutableLiveData<Boolean>()
-    val showVideo: LiveData<Boolean> = _showVideo
-
-    private val _playbackCommand = MutableLiveData<PlaybackCommand>()
-    val playbackCommand: LiveData<PlaybackCommand> = _playbackCommand
-
-
     private val _advancedCommand = MutableLiveData<AdvancedCommand>()
     val advancedCommand: LiveData<AdvancedCommand> = _advancedCommand
+
+    val playbackController: PlaybackController = PlaybackController(
+        gameSync = repository.gameSync,
+        scope = viewModelScope,
+        isGameMaster = { isGameMaster() },
+    )
 
     private var player: Player? = null
     private var lastHost: String? = null
     private var lastPort: Int? = null
     private var bluetoothAdapter: BluetoothAdapter? = null
-    private var currentVideoIndex = 0
-    private var currentPlaybackPosition = 0L
-    private var currentIsPlaying = false
     private var periodicSyncJob: Job? = null
     private var periodicStatusJob: Job? = null
     private val receivedVideoFiles = mutableSetOf<String>()
@@ -159,12 +155,8 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         periodicSyncJob?.cancel()
         periodicSyncJob = viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
             while (isActive) {
-                delay(PLAYBACK_SYNC_INTERVAL_MS)
-                if (isGameMaster() && currentIsPlaying) {
-                    repository.gameSync.broadcast(
-                        PlaybackState(currentVideoIndex, currentPlaybackPosition, currentIsPlaying)
-                    )
-                }
+                delay(PlaybackController.PLAYBACK_SYNC_INTERVAL_MS)
+                playbackController.broadcastDriftSync()
             }
         }
     }
@@ -187,8 +179,8 @@ class GameViewModel(application: Application, val repository: GameRepository = G
                 when (data) {
                     is VideoListMessage -> handleVideoList(data.videos.map { it.toVideo() }, address)
                     is FileTransferRequest -> handleFileTransferRequest(data, address)
-                    is PlaybackCommand -> _playbackCommand.postValue(data)
-                    is PlaybackState -> applyPlaybackState(data)
+                    is PlaybackCommand -> playbackController.applyFromWire(data)
+                    is PlaybackState -> playbackController.applyDriftCorrection(data)
                     is AdvancedCommand -> _advancedCommand.postValue(data)
                     is PasswordChallenge -> handlePasswordChallenge(data)
                     is PasswordMessage -> handlePasswordMessage(data, address)
@@ -269,7 +261,9 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     /**
      * On a successful join, push the GM's playlist (and current playback state) to the
      * new client. Without this they keep their local lobby playlist and `videoIndex`
-     * from GM's PlaybackState would seek into the wrong list.
+     * from GM's PlaybackState would seek into the wrong list. We push a
+     * PlaybackCommand (not PlaybackState) so the client's intent reconciles
+     * unconditionally — drift correction is not the right tool here.
      */
     private suspend fun pushInitialStateTo(address: String) {
         val currentVideos = videos.value.orEmpty()
@@ -279,9 +273,15 @@ class GameViewModel(application: Application, val repository: GameRepository = G
                 VideoListMessage(currentVideos.map { it.toDto() })
             )
         }
+        val current = playbackController.currentIntent()
         repository.gameSync.sendTo(
             address,
-            PlaybackState(currentVideoIndex, currentPlaybackPosition, currentIsPlaying)
+            PlaybackCommand(
+                PlaybackCommandType.PLAY_PAUSE,
+                current.videoIndex,
+                current.positionMs,
+                current.isPlaying,
+            )
         )
     }
 
@@ -666,82 +666,9 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     }
 
     fun onVideoSelected(video: Video) {
-        val videoIndex = videos.value?.indexOf(video)
-        if (videoIndex != null) {
-            _playbackCommand.postValue(PlaybackCommand(PlaybackCommandType.PLAY_PAUSE, videoIndex))
-        }
-    }
-
-    /**
-     * Called from the Player.Listener on isPlaying transitions. Records local
-     * state; broadcasts only if the transition is **not** the immediate
-     * after-effect of an explicit commandPlayback (which already sent the
-     * authoritative command). Within the grace window the listener stays
-     * quiet, so we don't double-broadcast on every Prev / Play-Next press.
-     *
-     * Broadcasts via PlaybackCommand (not PlaybackState) so the client's
-     * drift filter can't drop the message — natural end-of-video pauses
-     * propagate immediately.
-     */
-    fun broadcastPlaybackState(position: Long, isPlaying: Boolean, videoIndex: Int) {
-        currentVideoIndex = videoIndex
-        currentPlaybackPosition = position
-        currentIsPlaying = isPlaying
-        if (!isGameMaster()) return
-        val sinceExplicit = System.currentTimeMillis() - lastCommandPlaybackAtMs
-        if (sinceExplicit < COMMAND_GRACE_MS) return
-        viewModelScope.launch {
-            repository.gameSync.broadcast(
-                PlaybackCommand(PlaybackCommandType.PLAY_PAUSE, videoIndex, position, isPlaying)
-            )
-        }
-    }
-
-    /**
-     * Explicit GM playback action (Prev / Play / Next). Sends a PlaybackCommand
-     * so the client seeks unconditionally — unlike PlaybackState, which the
-     * client filters through a drift threshold and may silently drop when the
-     * new position is close to its last-seen one.
-     *
-     * Also stamps `lastCommandPlaybackAtMs` so the Player.Listener (which
-     * fires shortly after we set playWhenReady on ExoPlayer with mid-seek
-     * state) doesn't race this authoritative broadcast on the wire.
-     */
-    fun commandPlayback(videoIndex: Int, position: Long, playWhenReady: Boolean) {
-        currentVideoIndex = videoIndex
-        currentPlaybackPosition = position
-        currentIsPlaying = playWhenReady
-        lastCommandPlaybackAtMs = System.currentTimeMillis()
-        if (isGameMaster()) {
-            viewModelScope.launch {
-                repository.gameSync.broadcast(
-                    PlaybackCommand(PlaybackCommandType.PLAY_PAUSE, videoIndex, position, playWhenReady)
-                )
-            }
-        }
-    }
-
-    private var lastCommandPlaybackAtMs = 0L
-
-    private fun applyPlaybackState(state: PlaybackState) {
-        val drift = Math.abs(state.playbackPosition - currentPlaybackPosition)
-        val videoChanged = state.videoIndex != currentVideoIndex
-        val playingChanged = state.playWhenReady != currentIsPlaying
-        currentVideoIndex = state.videoIndex
-        currentPlaybackPosition = state.playbackPosition
-        currentIsPlaying = state.playWhenReady
-        // Only emit on transition — the GM rebroadcasts PlaybackState every 5s while
-        // playing, and unconditional emission would fire the white flash effect on
-        // every cycle (the "pulsing" the GM reported).
-        if (playingChanged) {
-            _showVideo.postValue(state.playWhenReady)
-        }
-        // Act on play/pause transitions even when drift is small, otherwise a
-        // GM resume from a paused-on-blue state at the same position leaves the
-        // client's surface visible but its ExoPlayer still paused.
-        if (videoChanged || drift > PLAYBACK_DRIFT_THRESHOLD_MS || playingChanged) {
-            _playbackCommand.postValue(PlaybackCommand(PlaybackCommandType.PLAY_PAUSE, state.videoIndex, state.playbackPosition, state.playWhenReady))
-        }
+        val videoIndex = videos.value?.indexOf(video) ?: return
+        if (videoIndex < 0) return
+        playbackController.play(videoIndex)
     }
 
     private fun requestFileTransfer(
@@ -778,11 +705,12 @@ class GameViewModel(application: Application, val repository: GameRepository = G
 
     fun buildSnapshot(): GameStateSnapshot? {
         val videoList = videos.value?.map { it.toDto() } ?: return null
+        val current = playbackController.currentIntent()
         return GameStateSnapshot(
             videoList = videoList,
-            currentVideoIndex = currentVideoIndex,
-            playbackPosition = currentPlaybackPosition,
-            isPlaying = currentIsPlaying,
+            currentVideoIndex = current.videoIndex,
+            playbackPosition = playbackController.observedPosition(),
+            isPlaying = current.isPlaying,
             playerAddresses = players.value?.map { it.device.deviceAddress } ?: emptyList(),
             gameMasterAddress = if (isGameMaster()) thisDevice.value?.deviceAddress ?: "" else "",
             timestamp = System.currentTimeMillis()
@@ -796,28 +724,16 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     fun restoreFromSnapshot(snapshot: GameStateSnapshot) {
         val restoredVideos = snapshot.videoList.map { it.toVideo() }
         repository.restoreVideos(restoredVideos)
-        currentVideoIndex = snapshot.currentVideoIndex
-        currentPlaybackPosition = snapshot.playbackPosition
-        currentIsPlaying = snapshot.isPlaying
-        _playbackCommand.postValue(
-            PlaybackCommand(
-                PlaybackCommandType.PLAY_PAUSE,
-                snapshot.currentVideoIndex,
-                snapshot.playbackPosition,
-                snapshot.isPlaying
-            )
+        playbackController.applyFromSnapshot(
+            snapshot.currentVideoIndex,
+            snapshot.playbackPosition,
+            snapshot.isPlaying,
         )
     }
 
     companion object {
-        const val PLAYBACK_SYNC_INTERVAL_MS = 5_000L
-        const val PLAYBACK_DRIFT_THRESHOLD_MS = 2_000L
         const val STATUS_BROADCAST_INTERVAL_MS = 10_000L
         const val END_GAME_DRAIN_MS = 500L
-        /** Window after an explicit commandPlayback during which listener-driven
-         *  broadcasts stay quiet. Covers the Player.Listener fires triggered by
-         *  the seek + playWhenReady set we just did. */
-        const val COMMAND_GRACE_MS = 500L
 
         val Factory: ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")

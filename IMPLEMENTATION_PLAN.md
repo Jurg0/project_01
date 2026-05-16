@@ -4,7 +4,7 @@ Forward-looking refactor work. Ranked by reliability impact (top) then hygiene (
 
 The recent round of playback / sync bugs (drift filter dropping commands, GM/player index disagreement, white pulsing, etc.) shared a common root: too many parallel state representations and too much logic concentrated in `MainActivity` + `GameViewModel`. This list is the recovery plan.
 
-> **Session-handover note:** Items R1, R2, R3, R4, R5, R6, R7, R8 are landed. Only R9 (a doc sweep) is open. Each open item below carries enough context — files, line ranges, design decisions already made, test guidance — to resume cold in a fresh session.
+> **Session-handover note:** All items R1–R9 are landed. The refactor roadmap is closed; this file is a historical record. Subsequent reliability or code-health work should start a fresh section or a new file.
 
 ---
 
@@ -81,24 +81,12 @@ The flag was overloaded: in the lobby it meant "show edit controls"; during a se
 
 Cleaned `M5.2` / `M5.1` / `M3` references from `activity_main.xml` (2 lines), `MainActivity.kt` (HID kdoc) and `GameViewModel.kt` (named-playlist section heading). No `Priority N` style references remained.
 
-### ○ R9 — Refresh top-of-file architecture summary in `CLAUDE.md` if it's drifted
+### ● R9 — Refresh architecture summary in `CLAUDE.md`
 
-Verify after R1–R4 land that the layer diagram and conventions in `CLAUDE.md` still match reality. Probable updates: `PlaybackController` joins the architecture diagram, the various `MainActivity` delegates get a one-line mention, the "GameViewModel takes GameRepository as a default constructor parameter" convention may need updating if the split changes it.
-
----
-
-## Open-item quick-glance
-
-| Item | Status | Depends on | Rough scope |
-|------|--------|------------|-------------|
-| R9   | ○      | R1–R4      | small sweep |
+`CLAUDE.md` updated: new layer diagram shows the four delegates under `MainActivity` and the three controllers under `GameViewModel`. Added a "Playback Single Source of Truth (R1)" section documenting the intent flow, the listener-feedback grace window, and the position-only role of `PlaybackState` on the wire. Conventions updated: controller construction pattern, narrow callback injection, `dispatchKeyEvent` shim, `PermissionHelper`-gated Wi-Fi APIs. Added a "Tests" subsection summarizing the 176-test suite and the deliberately-uncovered View delegates. Known Technical Debt section now lists only the two pre-existing minor bugs flagged in the R3/R4 review (torch reset on lobby; `_passwordVerified` reset on session end).
 
 ---
 
-## Process
+## Status
 
-- One item per commit (or per small batch of related items).
-- Update this file as items move `○ → ◐ → ●`. Replace the open-item block with a short summary of what landed and which files moved.
-- For items with non-obvious design choices, append a short "**Decision:**" note inline.
-- When all reliability items (R1, R2) are `●`, do a fresh field test before tackling the structural splits (R3, R4).
-- **Commit hygiene:** the recent commit log (`737f896`, `3475212`, `3816a31`, `ea834bc`, `4292fbc`) shows the cadence — one focused change per commit with a short summary line.
+All roadmap items (R1–R9) are landed. The recommended next step is a fresh field test of R1+R3+R4 together — that batch of refactors touched ExoPlayer wiring, the session lifecycle, and the entire `MainActivity` surface, so field validation is overdue.

@@ -64,6 +64,9 @@ Three layers handle connectivity:
 - GM mutators: `play()`, `pause()`, `previous(playlistSize)`, `advanceOrResume(playlistSize, atEndOfCurrent)` update intent **and** broadcast `PlaybackCommand`.
 - Player-side: `applyFromWire(command)` updates intent without re-broadcasting.
 - Player.Listener feedback: `onPlayerTransition(index, position, isPlaying)` only re-broadcasts when it disagrees with intent (catches natural end-of-video pauses from `pauseAtEndOfMediaItems`). A 500ms `COMMAND_GRACE_MS` window after an explicit mutator suppresses the listener-driven re-broadcast race.
+- **End-of-video is detected via `STATE_ENDED`, not `playWhenReady`:** `pauseAtEndOfMediaItems` parks ExoPlayer in `STATE_ENDED` with `playWhenReady` still true, so `onIsPlayingChanged`/`playWhenReady` can't see the end. `PlaybackViewDelegate.onPlaybackStateChanged` reports `STATE_ENDED` as a pause (`isPlaying=false`) so intent flips to paused. Without it the intent stayed "playing" and the next Play press mis-branched in `advanceOrResume` (advance-and-pause instead of advance-and-play) — the next video never started (field bug).
+- **Player is a pure follower:** only the **GM's** `onPlayerTransition` drives intent; on a player device it returns early (`if (!isGameMaster()) return`) and never mutates intent — player intent comes only from the wire (`applyFromWire` / `applyDriftCorrection`). Letting a player's listener touch intent stranded it on blue: a transient "paused" callback during a seek/buffer out of a parked item flipped intent to paused, and the never-start-playback guard below then blocked the recovering "playing" callback, so GM playback never appeared on the player (field-observed).
+- **Listener invariant (GM):** the GM's `onPlayerTransition` may report a *pause* (natural end-of-video) but must never *start* playback — a listener `isPlaying=true` while intent is paused is always a transient reconciler seek artifact and is ignored (`if (isPlaying && !current.isPlaying) return`). Without this, a Play/Next-while-playing press (advance-and-pause on blue) could flip the GM's intent back to playing outside its grace window while players stayed on the blue safe-screen — a GM/player desync seen in field testing.
 - `PlaybackState` on the wire is **position-only drift correction**, never intent.
 - `PlaybackViewDelegate` collects `intent` in a `repeatOnLifecycle(STARTED)` coroutine and reconciles ExoPlayer (seek + `playWhenReady` + surface visibility). Single code path drives ExoPlayer from any source.
 
@@ -119,7 +122,8 @@ Three layers handle connectivity:
 - `PlaybackControllerTest` (22), `FileTransferOrchestratorTest` (10), `SessionControllerTest` (23) cover the extracted controllers without Android view bindings.
 - `GameViewModelTest` covers the remaining roster/snapshot/playlist glue and routes `NetworkEvent` events through the dispatcher to verify controller wiring.
 - `MainActivityTest` is a Robolectric `ActivityScenario` smoke test that catches construction-time wiring bugs (delegate init order, ViewModel factory failures, etc.).
-- `MainActivity` UI delegates have no dedicated unit tests — most of their logic is thin view wiring, but `PermissionHelper`, `LightsAndScreenDelegate`, and `GmControlsDelegate` have testable logic that could be covered later if regressions appear.
+- `MainActivity` UI delegates are mostly thin view wiring. The exception now covered: `GmControlsDelegate`'s presenter HID key → GM action mapping is extracted into the pure `presenterActionFor(keyCode, ctrlPressed)` and tested in `GmControlsKeyMappingTest` (plain JVM, no Robolectric). `PermissionHelper` and `LightsAndScreenDelegate` still have testable logic that could be covered later if regressions appear.
+- Bluetooth presenter mapping is field-verified against a **Norwii N21 BLE**: page back/forward = DPAD_LEFT/RIGHT (default arrow mode) → Prev/Next; "Mark" button = Ctrl+P → toggle Light; Volume +/- deliberately unmapped. Capture new devices' keycodes with `adb logcat` (the app had a temporary `PresenterKeys` diagnostic log for this, since removed).
 
 ## Releases
 
@@ -133,7 +137,9 @@ The `build.gradle` signing config reads from `local.properties` or environment v
 
 ## Known Technical Debt
 
-See `IMPLEMENTATION_PLAN.md` for the full improvement roadmap. The R1–R8 refactor is complete; only R9 (this file) was the doc sweep. Two pre-existing minor issues surfaced during the R3/R4 review:
+See `IMPLEMENTATION_PLAN.md` for the full improvement roadmap. The R1–R8 refactor is complete; only R9 (this file) was the doc sweep.
 
-- `LightsAndScreenDelegate.resetToLobbyDefaults` doesn't call `setTorchMode(false)` — if the GM ends a session with the torch physically on, the hardware flashlight stays on until the next toggle. One-line fix.
-- `SessionController._passwordVerified` is not reset on session end, so a cached `false` from a prior failed join can re-fire the "Incorrect password" toast on activity recreation.
+Two pre-existing minor issues surfaced during the R3/R4 review are now fixed:
+
+- `LightsAndScreenDelegate.resetToLobbyDefaults` now calls `setTorchMode(false)` so the hardware flashlight is actually turned off on session end, not just the flag/labels.
+- `SessionController` resets `_passwordVerified` to `true` in both teardown paths (`handleEndGame` / `endGame`), so a cached `false` from a prior failed join can no longer re-fire the "Incorrect password" toast on activity recreation. Covered by two regression tests in `SessionControllerTest`.

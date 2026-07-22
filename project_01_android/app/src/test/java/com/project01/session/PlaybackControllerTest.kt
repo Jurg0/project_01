@@ -332,6 +332,82 @@ class PlaybackControllerTest {
     }
 
     @Test
+    fun `onPlayerTransition never starts playback when intent is paused`() = runTest {
+        // Field repro (GM+player desync): GM presses Play/Next mid-video.
+        // advanceOrResume commits (2, 0, isPlaying=false) — advance to the next
+        // item, pause on the blue safe-screen. The reconciler's seek then makes
+        // ExoPlayer briefly report the next item as *playing*, and that listener
+        // fire can land OUTSIDE the grace window. It must not flip intent back to
+        // playing — doing so made the GM play the next video while the player,
+        // which suppressed the same transient inside its later-started grace
+        // window, stayed on the blue safe-screen.
+        var now = 0L
+        val (controller, broadcasts) = buildController(clock = { now })
+        controller.play(1)
+        controller.advanceOrResume(playlistSize = 5, atEndOfCurrent = false) // -> (2, 0, false)
+        now = PlaybackController.COMMAND_GRACE_MS + 1 // past the grace window
+        broadcasts.clear()
+
+        controller.onPlayerTransition(index = 2, positionMs = 300L, isPlaying = true)
+
+        val intent = controller.currentIntent()
+        assertEquals(2, intent.videoIndex)
+        assertFalse("listener must never start playback from a paused intent", intent.isPlaying)
+        assertTrue("no re-broadcast for a spurious listener-driven play", broadcasts.isEmpty())
+    }
+
+    @Test
+    fun `end-of-video pause then play advances to and plays the next video`() = runTest {
+        // Field regression: at a video's end, pauseAtEndOfMediaItems leaves
+        // ExoPlayer in STATE_ENDED with playWhenReady still true. The view now
+        // reports that end as a pause (isPlaying=false) via onPlaybackStateChanged,
+        // which must flip intent to paused — otherwise the next Play press reads
+        // current.isPlaying==true and takes advanceOrResume's "advance & pause on
+        // blue" branch, leaving the next video stuck (blue) on both devices.
+        var now = 0L
+        val (controller, broadcasts) = buildController(clock = { now })
+        controller.play(0)
+        now = PlaybackController.COMMAND_GRACE_MS + 1 // video 0 plays past the grace window
+        broadcasts.clear()
+
+        // Video 0 reaches its end -> reported as a pause at the end position.
+        controller.onPlayerTransition(index = 0, positionMs = 30_000L, isPlaying = false)
+        assertFalse("end-of-video must flip intent to paused", controller.currentIntent().isPlaying)
+
+        // Press Play (screen control or remote): must advance to video 1 AND play it.
+        controller.advanceOrResume(playlistSize = 5, atEndOfCurrent = true)
+        val intent = controller.currentIntent()
+        assertEquals(1, intent.videoIndex)
+        assertEquals(0L, intent.positionMs)
+        assertTrue("the next video must actually start", intent.isPlaying)
+    }
+
+    @Test
+    fun `player ExoPlayer listener never mutates intent - it follows the wire only`() = runTest {
+        // Field regression: on a player device, GM playback did not start at all.
+        // A transient "paused" listener callback during a seek/buffer out of a
+        // parked item flipped the player's intent to paused (blue), and the
+        // never-start-playback guard then blocked the recovering "playing"
+        // callback — stranding the player on the blue safe-screen. A player must
+        // follow wire intent only; its ExoPlayer listener must not touch intent.
+        var now = 1000L
+        val (controller, broadcasts) = buildController(isGameMaster = false, clock = { now })
+        controller.applyFromWire(
+            PlaybackCommand(PlaybackCommandType.PLAY_PAUSE, videoIndex = 0, playbackPosition = 0L, playWhenReady = true)
+        )
+        now += PlaybackController.COMMAND_GRACE_MS + 1 // move past the grace window
+
+        // Transient mid-buffer "paused" report must NOT pause the player.
+        controller.onPlayerTransition(index = 0, positionMs = 500L, isPlaying = false)
+        assertTrue("player must stay playing; its listener must not pause it", controller.currentIntent().isPlaying)
+
+        // A later "playing" report must also leave the (already-playing) intent be, and never broadcast.
+        controller.onPlayerTransition(index = 0, positionMs = 800L, isPlaying = true)
+        assertTrue(controller.currentIntent().isPlaying)
+        assertTrue("a player never broadcasts", broadcasts.isEmpty())
+    }
+
+    @Test
     fun `onPlayerTransition within grace window is suppressed even when divergent`() = runTest {
         var now = 0L
         val (controller, broadcasts) = buildController(clock = { now })

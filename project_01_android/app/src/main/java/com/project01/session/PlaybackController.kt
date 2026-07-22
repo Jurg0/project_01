@@ -157,30 +157,45 @@ class PlaybackController(
     }
 
     /**
-     * Called from ExoPlayer's Player.Listener. If the listener-observed state
-     * disagrees with intent (natural end-of-video pause, etc.), and we're
-     * outside the post-command grace window, update intent and broadcast.
-     * Otherwise this call is purely informational — just record the position.
+     * Called from ExoPlayer's Player.Listener. Only the **GM's** listener drives
+     * intent — it catches natural end-of-video pauses (`pauseAtEndOfMediaItems`)
+     * and broadcasts them. On a **player** device the ExoPlayer is a pure
+     * follower of wire-received intent (`applyFromWire` / `applyDriftCorrection`),
+     * so its listener never mutates intent; it only records position for drift
+     * math. Letting a player's listener touch intent stranded it on the blue
+     * safe-screen: a transient "paused" callback during a seek/buffer out of a
+     * parked item flipped intent to paused, and the never-start-playback guard
+     * below then blocked the recovering "playing" callback — so GM playback
+     * never appeared on the player at all (field-observed).
      */
     fun onPlayerTransition(index: Int, positionMs: Long, isPlaying: Boolean) {
         lastObservedPositionMs = positionMs
+        // Players follow the wire only — their ExoPlayer listener must not touch intent.
+        if (!isGameMaster()) return
         val current = _intent.value
         val sinceExplicit = clock() - lastExplicitCommandAtMs
         if (sinceExplicit < COMMAND_GRACE_MS) return
+        // The GM's listener may report a natural pause (end-of-video), but it
+        // must never START playback. ExoPlayer only plays when we set
+        // playWhenReady = true, and we only do that from a playing intent;
+        // pauseAtEndOfMediaItems blocks auto-advance. So an isPlaying=true
+        // report while intent is paused is always a transient artifact of the
+        // reconciler's seek (the just-seeked item plays for a beat before
+        // playWhenReady=false lands). Honoring it let the GM diverge into
+        // "playing the next video" after an advance-and-pause command.
+        if (isPlaying && !current.isPlaying) return
         if (isPlaying == current.isPlaying && index == current.videoIndex) return
         val next = PlaybackIntent(index, positionMs, isPlaying)
         _intent.value = next
-        if (isGameMaster()) {
-            scope.launch {
-                gameSync.broadcast(
-                    PlaybackCommand(
-                        PlaybackCommandType.PLAY_PAUSE,
-                        next.videoIndex,
-                        next.positionMs,
-                        next.isPlaying,
-                    )
+        scope.launch {
+            gameSync.broadcast(
+                PlaybackCommand(
+                    PlaybackCommandType.PLAY_PAUSE,
+                    next.videoIndex,
+                    next.positionMs,
+                    next.isPlaying,
                 )
-            }
+            )
         }
     }
 

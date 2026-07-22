@@ -70,8 +70,31 @@ class PlaybackViewDelegate(
         currentVideosProvider()?.let { updatePlaylist(it) }
 
         exoPlayer?.addListener(object : Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                // pauseAtEndOfMediaItems parks the player in STATE_ENDED at the
+                // end of each video WITH playWhenReady still true — so the
+                // playWhenReady we report below can't detect the end. Report the
+                // end explicitly as a pause at the current position, so the GM
+                // commits + broadcasts the end-of-video blue screen and intent
+                // flips to paused. Without this the intent stayed "playing", and
+                // the next Play press hit advanceOrResume's "playing → advance &
+                // pause on blue" branch, so the next video never started (field bug).
+                if (playbackState == Player.STATE_ENDED) {
+                    val player = exoPlayer ?: return
+                    playbackController.onPlayerTransition(
+                        player.currentMediaItemIndex,
+                        player.currentPosition,
+                        isPlaying = false,
+                    )
+                }
+            }
+
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 val player = exoPlayer ?: return
+                // Report playWhenReady (not `isPlaying`) on purpose: it stays
+                // stable across transient STATE_BUFFERING stalls so a mid-video
+                // hiccup doesn't pause the whole group. End-of-video is handled
+                // by onPlaybackStateChanged above, not here.
                 playbackController.onPlayerTransition(
                     player.currentMediaItemIndex,
                     player.currentPosition,

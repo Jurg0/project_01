@@ -51,6 +51,7 @@ class LightsAndScreenDelegate(
         binding.deactivateTorchButton.text = "Torch"
         updateGmLightButton()
         setScreenBrightness(-1f)
+        setTorchMode(false) // ensure the physical flashlight is off, not just the flag/labels
     }
 
     private fun applyScreenOff() {

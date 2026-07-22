@@ -161,6 +161,7 @@ class SessionController(
         player = null
         lastHost = null
         lastPort = null
+        _passwordVerified.postValue(true) // clear any stale rejection so it can't re-toast on recreation
         _connectionState.postValue(ConnectionStatus.DISCONNECTED)
         postUiError(UiError.Informational("Game ended by host"))
         onSessionEnded(true)
@@ -258,6 +259,7 @@ class SessionController(
             player = null
             lastHost = null
             lastPort = null
+            _passwordVerified.postValue(true) // clear any stale rejection so it can't re-toast on recreation
             _connectionState.postValue(ConnectionStatus.DISCONNECTED)
             onSessionEnded(false)
             try {

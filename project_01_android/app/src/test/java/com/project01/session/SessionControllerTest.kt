@@ -353,6 +353,33 @@ class SessionControllerTest {
     }
 
     @Test
+    fun `handleEndGame clears a stale password rejection so it cannot re-toast`() {
+        val controller = newController()
+        controller.handlePasswordResponseMessage(PasswordResponseMessage(false))
+        assertEquals(false, controller.passwordVerified.value)
+
+        controller.handleEndGame()
+
+        assertEquals(true, controller.passwordVerified.value)
+    }
+
+    @Test
+    fun `endGame clears a stale password rejection so it cannot re-toast`() = runTest(dispatcher) {
+        val controller = newController()
+        controller.handleConnectionInfo(WifiP2pInfo().apply {
+            groupFormed = true
+            isGroupOwner = true
+        })
+        controller.handlePasswordResponseMessage(PasswordResponseMessage(false))
+        assertEquals(false, controller.passwordVerified.value)
+
+        controller.endGame()
+        advanceUntilIdle()
+
+        assertEquals(true, controller.passwordVerified.value)
+    }
+
+    @Test
     fun `handleEndGame sets DISCONNECTED state and emits Informational error`() {
         val controller = newController()
         controller.handleConnectionInfo(WifiP2pInfo().apply {

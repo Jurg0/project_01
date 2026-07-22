@@ -104,48 +104,57 @@ class GmControlsDelegate(
     /**
      * Bluetooth presenters expose themselves as HID keyboards. Android delivers
      * their key events to the focused window, so the GM just pairs the remote in
-     * system settings and the events land here. We map the common presenter keys
-     * to the GM's Prev / Play-Next / Light actions.
+     * system settings and the events land here. [presenterActionFor] maps the
+     * presenter keys to the GM's Prev / Play-Next / Light actions.
      *
-     * Volume keys are intentionally NOT mapped. They'd conflict with the GM
-     * phone's own media volume during a session.
+     * Norwii N21 BLE (field-verified via `adb logcat`): page back/forward arrive
+     * as DPAD_LEFT / DPAD_RIGHT (its default arrow-key mode) → Prev / Next, and
+     * the "Mark" button sends Ctrl+P → toggle Light. Volume +/- are intentionally
+     * NOT mapped — they'd fight the GM phone's own media volume during a session.
      *
      * Returns true if the event was consumed; the activity falls back to super
      * dispatch when this returns false.
      */
     fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (!isGameMaster() || !isGameStarted()) return false
-        val handled = when (event.keyCode) {
-            KeyEvent.KEYCODE_DPAD_RIGHT,
-            KeyEvent.KEYCODE_PAGE_DOWN,
-            KeyEvent.KEYCODE_MEDIA_NEXT,
-            KeyEvent.KEYCODE_DPAD_LEFT,
-            KeyEvent.KEYCODE_PAGE_UP,
-            KeyEvent.KEYCODE_MEDIA_PREVIOUS,
-            KeyEvent.KEYCODE_DPAD_CENTER,
-            KeyEvent.KEYCODE_SPACE,
-            KeyEvent.KEYCODE_ENTER,
-            KeyEvent.KEYCODE_F5,
-            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> true
-            else -> false
-        }
-        if (!handled) return false
-        // Run the action on the DOWN edge only; still consume UP so the OS doesn't act on it.
+        val action = presenterActionFor(event.keyCode, event.isCtrlPressed) ?: return false
+        // Act on the DOWN edge only; still consume UP/auto-repeat so the OS doesn't act on them.
         if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-            when (event.keyCode) {
-                KeyEvent.KEYCODE_DPAD_RIGHT,
-                KeyEvent.KEYCODE_PAGE_DOWN,
-                KeyEvent.KEYCODE_MEDIA_NEXT -> onGmPlayNext()
-                KeyEvent.KEYCODE_DPAD_LEFT,
-                KeyEvent.KEYCODE_PAGE_UP,
-                KeyEvent.KEYCODE_MEDIA_PREVIOUS -> onGmPrevious()
-                KeyEvent.KEYCODE_DPAD_CENTER,
-                KeyEvent.KEYCODE_SPACE,
-                KeyEvent.KEYCODE_ENTER,
-                KeyEvent.KEYCODE_F5,
-                KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> onGmToggleLight()
+            when (action) {
+                PresenterAction.NEXT -> onGmPlayNext()
+                PresenterAction.PREVIOUS -> onGmPrevious()
+                PresenterAction.TOGGLE_LIGHT -> onGmToggleLight()
             }
         }
         return true
     }
+}
+
+/** The GM action a presenter key maps to, or null if it isn't a presenter control. */
+internal enum class PresenterAction { NEXT, PREVIOUS, TOGGLE_LIGHT }
+
+/**
+ * Pure key → action mapping for bluetooth-presenter HID keys. Extracted from
+ * [GmControlsDelegate.dispatchKeyEvent] so it's unit-testable without a
+ * Robolectric activity/binding. `KeyEvent.KEYCODE_*` are compile-time constants
+ * and get inlined, so this runs on a plain JVM.
+ *
+ * `KEYCODE_P` toggles the light ONLY with Ctrl held — that's the Norwii N21
+ * "Mark" button (Ctrl+P). A bare P is left for the system. The lone Ctrl-down
+ * event the Mark button fires first falls through to null (not a control).
+ */
+internal fun presenterActionFor(keyCode: Int, ctrlPressed: Boolean): PresenterAction? = when (keyCode) {
+    KeyEvent.KEYCODE_DPAD_RIGHT,
+    KeyEvent.KEYCODE_PAGE_DOWN,
+    KeyEvent.KEYCODE_MEDIA_NEXT -> PresenterAction.NEXT
+    KeyEvent.KEYCODE_DPAD_LEFT,
+    KeyEvent.KEYCODE_PAGE_UP,
+    KeyEvent.KEYCODE_MEDIA_PREVIOUS -> PresenterAction.PREVIOUS
+    KeyEvent.KEYCODE_DPAD_CENTER,
+    KeyEvent.KEYCODE_SPACE,
+    KeyEvent.KEYCODE_ENTER,
+    KeyEvent.KEYCODE_F5,
+    KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> PresenterAction.TOGGLE_LIGHT
+    KeyEvent.KEYCODE_P -> if (ctrlPressed) PresenterAction.TOGGLE_LIGHT else null
+    else -> null
 }

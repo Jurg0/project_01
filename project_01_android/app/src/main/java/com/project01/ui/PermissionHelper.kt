@@ -47,8 +47,11 @@ class PermissionHelper(
     }
 
     fun wifiP2pPermissions(): Array<String> {
+        // Android 13+ uses NEARBY_WIFI_DEVICES for Wi-Fi Direct; older versions
+        // gate P2P scanning behind ACCESS_FINE_LOCATION (capped at API 32 in the
+        // manifest). The app itself never reads physical location.
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.NEARBY_WIFI_DEVICES)
+            arrayOf(Manifest.permission.NEARBY_WIFI_DEVICES)
         } else {
             arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
         }

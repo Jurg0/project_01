@@ -1,5 +1,6 @@
 package com.project01.session
 
+import android.net.wifi.p2p.WifiP2pConfig
 import android.net.wifi.p2p.WifiP2pDevice
 import android.net.wifi.p2p.WifiP2pInfo
 import android.net.wifi.p2p.WifiP2pManager
@@ -21,6 +22,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
+import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
@@ -456,13 +458,24 @@ class SessionControllerTest {
     }
 
     @Test
-    fun `connectToPlayer with wifi enabled calls WifiP2pManager connect`() {
+    fun `connectToPlayer connects as client with groupOwnerIntent 0`() {
         val controller = newController()
         val peer = Player(WifiP2pDevice().apply { deviceAddress = "AA:BB" }, "AA:BB", false)
+        // No stale group to remove: fire the removeGroup callback so connect proceeds.
+        whenever(wifiManager.removeGroup(any(), any())).thenAnswer {
+            (it.arguments[1] as WifiP2pManager.ActionListener).onFailure(0)
+            null
+        }
+        val configCaptor = argumentCaptor<WifiP2pConfig>()
 
         controller.connectToPlayer(peer)
 
-        verify(wifiManager).connect(any(), any(), any())
+        // Stale group is cleared before connecting so groupOwnerIntent is honored.
+        verify(wifiManager).removeGroup(any(), any())
+        verify(wifiManager).connect(any(), configCaptor.capture(), any())
+        // A joiner must never win group ownership, else it inherits the GM role.
+        assertEquals(0, configCaptor.firstValue.groupOwnerIntent)
+        assertEquals("AA:BB", configCaptor.firstValue.deviceAddress)
     }
 
     @Test

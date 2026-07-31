@@ -235,7 +235,30 @@ class SessionController(
             postWifiOffError()
             return
         }
-        val config = WifiP2pConfig().apply { deviceAddress = player.device.deviceAddress }
+        // A joining device must never win Wi-Fi Direct group ownership. The GM's
+        // autonomous group is the sole owner, and the game-master role is read
+        // straight off info.isGroupOwner (handleConnectionInfo). If a joiner ends
+        // up as group owner it inherits isGameMaster() == true — which exposes the
+        // GM overlay and makes its ExoPlayer listener re-broadcast playback intent,
+        // fighting the real GM. Both are field-reported bugs and share this one
+        // cause. Guard in two places, because groupOwnerIntent alone isn't enough:
+        //   1. Tear down any stale local group first — groupOwnerIntent is ignored
+        //      while this device already owns an autonomous group (e.g. a device
+        //      that was GM in a prior session and is now joining).
+        //   2. Connect with groupOwnerIntent = 0 so GO negotiation always yields
+        //      the client role for us.
+        wifiP2pManager.removeGroup(channel, object : WifiP2pManager.ActionListener {
+            override fun onSuccess() { doConnectAsClient(player) }       // stale group cleared
+            override fun onFailure(reason: Int) { doConnectAsClient(player) } // nothing to clear
+        })
+    }
+
+    @SuppressLint("MissingPermission") // Permission checked in MainActivity before calling
+    private fun doConnectAsClient(player: Player) {
+        val config = WifiP2pConfig().apply {
+            deviceAddress = player.device.deviceAddress
+            groupOwnerIntent = 0 // 0 = "never group owner"; keeps this device a client
+        }
         wifiP2pManager.connect(channel, config, object : WifiP2pManager.ActionListener {
             override fun onSuccess() {
                 // Handled by connectionInfoListener in repository

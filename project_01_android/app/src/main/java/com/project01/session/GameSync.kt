@@ -35,6 +35,10 @@ class GameSync(private val networkManager: NetworkManager) {
         return networkManager.consumeNonce(address)
     }
 
+    fun disconnectClient(address: String) {
+        networkManager.disconnectClient(address)
+    }
+
     fun shutdown() {
         reconnectionManager.shutdown()
         reconnectionScope.cancel()

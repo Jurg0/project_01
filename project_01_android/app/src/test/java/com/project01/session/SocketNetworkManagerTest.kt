@@ -211,4 +211,40 @@ class SocketNetworkManagerTest {
 
         client.close()
     }
+
+    @Test
+    fun `disconnectClient closes the socket and emits ClientDisconnected`() = runBlocking {
+        manager.startServer()
+        delay(200)
+
+        val client = Socket("127.0.0.1", manager.port)
+        client.soTimeout = 5000
+        val clientInput = DataInputStream(client.getInputStream())
+        awaitClientConnected()
+
+        val disconnected = CompletableDeferred<String>()
+        val job = CoroutineScope(Dispatchers.Default).launch {
+            manager.events.collect { event ->
+                if (event is NetworkEvent.ClientDisconnected) disconnected.complete(event.address)
+            }
+        }
+        delay(100) // ensure the collector is subscribed before we evict (SharedFlow has no replay)
+
+        manager.disconnectClient("127.0.0.1")
+
+        // The server closed our socket: draining the input stream hits EOF (or a reset).
+        var closed = false
+        try {
+            while (true) {
+                if (clientInput.read() == -1) { closed = true; break }
+            }
+        } catch (_: Exception) {
+            closed = true
+        }
+        assertTrue("Server should have closed the evicted client's socket", closed)
+        assertEquals("127.0.0.1", disconnected.await())
+
+        job.cancel()
+        client.close()
+    }
 }

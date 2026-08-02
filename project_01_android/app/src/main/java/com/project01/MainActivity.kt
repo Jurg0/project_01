@@ -23,14 +23,14 @@ import kotlinx.coroutines.launch
 import com.google.android.material.snackbar.Snackbar
 import com.project01.databinding.ActivityMainBinding
 import com.project01.p2p.ConnectionService
-import com.project01.session.CreateGameDialogFragment
-import com.project01.session.JoinGameDialogFragment
+import com.project01.session.PasswordPromptDialogFragment
 import com.project01.session.SnapshotManager
 import com.project01.ui.ConnectionStatus
 import com.project01.ui.GmControlsDelegate
 import com.project01.ui.LightsAndScreenDelegate
 import com.project01.ui.PermissionHelper
 import com.project01.ui.PlaybackViewDelegate
+import com.project01.ui.StartScreenControlsDelegate
 import com.project01.ui.UiError
 import com.project01.viewmodel.GameViewModel
 
@@ -43,6 +43,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var lightsAndScreen: LightsAndScreenDelegate
     private lateinit var playbackView: PlaybackViewDelegate
     private lateinit var gmControls: GmControlsDelegate
+    private lateinit var startScreenControls: StartScreenControlsDelegate
+
+    /** The prepared game the GM is currently editing (prepare mode); null otherwise. */
+    private var editingPreparedName: String? = null
 
     private val openDocumentLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let {
@@ -83,6 +87,14 @@ class MainActivity : AppCompatActivity() {
         )
         gmControls.bind()
 
+        startScreenControls = StartScreenControlsDelegate(
+            activity = this,
+            binding = binding,
+            onCreateRequested = { onCreateRequested() },
+            onPrepareRequested = { onPrepareRequested() },
+        )
+        startScreenControls.bind()
+
         setupRecyclerViews()
         setupClickListeners()
         observeViewModel()
@@ -90,11 +102,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupRecyclerViews() {
-        playerAdapter = PlayerAdapter { player ->
-            permissions.requirePermissions(permissions.wifiP2pPermissions()) {
-                gameViewModel.connectToPlayer(player)
-            }
-        }
+        // The player list is now the GM's read-only roster of authenticated players.
+        // Joining is auto-connect (JOIN button → password → DNS-SD), so tapping a row
+        // no longer connects — that path used to bypass password entry entirely.
+        playerAdapter = PlayerAdapter { /* roster is display-only */ }
         binding.playerList.layoutManager = LinearLayoutManager(this)
         binding.playerList.adapter = playerAdapter
 
@@ -110,20 +121,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupClickListeners() {
-        binding.createGameButton.setOnClickListener {
-            permissions.requirePermissions(permissions.wifiP2pPermissions()) {
-                CreateGameDialogFragment { password ->
-                    gameViewModel.createGame(password)
-                }.show(supportFragmentManager, "CreateGameDialogFragment")
-            }
-        }
-
+        // JOIN: password-only prompt → auto-discover + connect to the single host.
         binding.joinGameButton.setOnClickListener {
             permissions.requirePermissions(permissions.wifiP2pPermissions()) {
-                gameViewModel.discoverPeers()
-                JoinGameDialogFragment { name, password ->
-                    gameViewModel.joinGame(name, password)
-                }.show(supportFragmentManager, "JoinGameDialogFragment")
+                PasswordPromptDialogFragment { password ->
+                    gameViewModel.join(password)
+                }.show(supportFragmentManager, "JoinDialog")
             }
         }
 
@@ -133,6 +136,13 @@ class MainActivity : AppCompatActivity() {
 
         binding.savePlaylistButton.setOnClickListener { showSavePlaylistDialog() }
         binding.loadPlaylistButton.setOnClickListener { showLoadPlaylistDialog() }
+
+        // Prepare mode: persist the current (playlist + password) pair, or exit.
+        binding.prepareSaveButton.setOnClickListener { savePreparedGame() }
+        binding.prepareDoneButton.setOnClickListener {
+            editingPreparedName = null
+            gameViewModel.setPrepareMode(false)
+        }
 
         binding.turnOffScreenButton.setOnClickListener {
             if (lightsAndScreen.isScreenOff) {
@@ -211,6 +221,90 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    // --- Undercover GM hotspots (start screen) ---
+
+    /** CREATE (double-tap top-right): password prompt identical to JOIN, then start
+     *  the game matching that password. See GameViewModel.createGameForPassword. */
+    private fun onCreateRequested() {
+        permissions.requirePermissions(permissions.wifiP2pPermissions()) {
+            PasswordPromptDialogFragment { password ->
+                gameViewModel.createGameForPassword(password)
+            }.show(supportFragmentManager, "CreateDialog")
+        }
+    }
+
+    /** PREPARE (long-press top-left): manage prepared (playlist + password) pairs. */
+    private fun onPrepareRequested() {
+        val names = gameViewModel.listPreparedGames()
+        val items = (names + "New game…").toTypedArray()
+        val builder = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Prepared games")
+            .setItems(items) { _, which ->
+                if (which == names.size) {
+                    promptNewPreparedGame()
+                } else {
+                    val name = names[which]
+                    val game = gameViewModel.loadPreparedGameIntoEditor(name)
+                    editingPreparedName = name
+                    binding.preparePassword.setText(game?.password ?: "")
+                    gameViewModel.setPrepareMode(true)
+                }
+            }
+            .setNegativeButton("Cancel", null)
+        if (names.isNotEmpty()) {
+            builder.setNeutralButton("Delete…") { _, _ -> showDeletePreparedGameDialog(names) }
+        }
+        builder.show()
+    }
+
+    private fun promptNewPreparedGame() {
+        val input = android.widget.EditText(this).apply {
+            hint = "Game name"
+            setSingleLine()
+        }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("New prepared game")
+            .setView(input)
+            .setPositiveButton("Create") { _, _ ->
+                val name = input.text.toString().trim()
+                if (name.isNotEmpty()) {
+                    editingPreparedName = name
+                    gameViewModel.beginNewPreparedGame()
+                    binding.preparePassword.setText("")
+                    gameViewModel.setPrepareMode(true)
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun showDeletePreparedGameDialog(names: List<String>) {
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Delete prepared game")
+            .setItems(names.toTypedArray()) { _, which ->
+                val name = names[which]
+                gameViewModel.deletePreparedGame(name)
+                Toast.makeText(this, "Deleted \"$name\"", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun savePreparedGame() {
+        val name = editingPreparedName
+        if (name.isNullOrEmpty()) {
+            Toast.makeText(this, "No game being edited", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val password = binding.preparePassword.text.toString().trim()
+        if (password.isEmpty()) {
+            Toast.makeText(this, "Set a password first", Toast.LENGTH_SHORT).show()
+            return
+        }
+        gameViewModel.prepareGame(name, password, gameViewModel.videos.value ?: emptyList())
+        Toast.makeText(this, "Saved \"$name\"", Toast.LENGTH_SHORT).show()
+    }
+
     private fun showEndGameDialog() {
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("End Game?")
@@ -233,7 +327,7 @@ class MainActivity : AppCompatActivity() {
         })
 
         gameViewModel.isGameStarted.observe(this, Observer { isStarted ->
-            updateUi(isStarted)
+            updateUi()
             if (isStarted) {
                 ContextCompat.startForegroundService(this, Intent(this, ConnectionService::class.java))
                 val current = gameViewModel.playbackController.currentIntent()
@@ -243,6 +337,11 @@ class MainActivity : AppCompatActivity() {
                 videoAdapter.setCurrent(-1, false)
             }
         })
+
+        // prepareMode has an initial value (false), so this observer also fires once on
+        // registration — that is what drives showStartScreen() on a cold start, since
+        // isGameStarted never emits at launch.
+        gameViewModel.prepareMode.observe(this, Observer { updateUi() })
 
         // Mirror the playback intent onto the playlist now-playing indicator.
         // Only meaningful during an active session; the isGameStarted observer
@@ -384,21 +483,24 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun showLobby() {
-        // In the lobby nobody has a role yet — show playlist edit controls so the
-        // user can prepare a playlist for the next session (host or guest).
-        videoAdapter.editable = true
-        videoAdapter.notifyDataSetChanged()
-
+    /** Player-facing start screen: only JOIN visible, plus the invisible GM hotspots. */
+    private fun showStartScreen() {
         binding.errorBanner.visibility = View.GONE
         binding.mainContent.visibility = View.VISIBLE
         binding.playerContainer.visibility = View.GONE
-        binding.sectionLabels.visibility = View.VISIBLE
-        binding.listsContainer.visibility = View.VISIBLE
+        binding.sectionLabels.visibility = View.GONE
+        binding.listsContainer.visibility = View.GONE
         binding.buttonBar.visibility = View.VISIBLE
+        binding.sessionControlsRow.visibility = View.VISIBLE   // JOIN
+        binding.gmToolsRow.visibility = View.GONE
+        binding.savedPlaylistsRow.visibility = View.GONE
+        binding.prepareRow.visibility = View.GONE
         binding.connectivityIndicator.visibility = View.VISIBLE
         binding.invisibleResumeButton.visibility = View.GONE
-        binding.playerView.useController = true
+        // Undercover GM affordances live only here.
+        binding.prepareHotspot.visibility = View.VISIBLE
+        binding.createHotspot.visibility = View.VISIBLE
+        binding.playerView.useController = false
         gmControls.hideOverlay()
         lightsAndScreen.resetToLobbyDefaults()
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -408,7 +510,37 @@ class MainActivity : AppCompatActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, true)
         WindowInsetsControllerCompat(window, binding.root).show(WindowInsetsCompat.Type.systemBars())
 
-        binding.createGameButton.announceForAccessibility("Returned to lobby.")
+        binding.joinGameButton.announceForAccessibility("Start screen.")
+    }
+
+    /** GM-only prepare editor (opened via the invisible PREPARE hotspot, ahead of time):
+     *  edit the playlist + password of a prepared game. */
+    private fun showPrepareScreen() {
+        videoAdapter.editable = true
+        videoAdapter.notifyDataSetChanged()
+
+        binding.errorBanner.visibility = View.GONE
+        binding.mainContent.visibility = View.VISIBLE
+        binding.playerContainer.visibility = View.GONE
+        binding.sectionLabels.visibility = View.VISIBLE
+        binding.listsContainer.visibility = View.VISIBLE
+        binding.buttonBar.visibility = View.VISIBLE
+        binding.gmToolsRow.visibility = View.VISIBLE          // + Video (Screen/Torch inert pre-session)
+        binding.savedPlaylistsRow.visibility = View.VISIBLE   // Save/Load named playlists
+        binding.prepareRow.visibility = View.VISIBLE          // password + Save + Done
+        binding.sessionControlsRow.visibility = View.GONE     // hide JOIN
+        binding.connectivityIndicator.visibility = View.GONE
+        binding.invisibleResumeButton.visibility = View.GONE
+        // Hotspots off in prepare mode so a corner tap can't re-trigger create/prepare.
+        binding.prepareHotspot.visibility = View.GONE
+        binding.createHotspot.visibility = View.GONE
+        binding.playerView.useController = false
+        gmControls.hideOverlay()
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        supportActionBar?.show()
+        WindowCompat.setDecorFitsSystemWindows(window, true)
+        WindowInsetsControllerCompat(window, binding.root).show(WindowInsetsCompat.Type.systemBars())
     }
 
     private fun showGame() {
@@ -429,6 +561,10 @@ class MainActivity : AppCompatActivity() {
         binding.playerView.videoSurfaceView?.visibility = View.GONE
         gmControls.hideOverlay()
         binding.invisibleResumeButton.visibility = if (isGameMaster) View.VISIBLE else View.GONE
+        // Start-screen hotspots must not intercept in-game touches (a corner double-tap
+        // would otherwise pop the create dialog mid-game).
+        binding.prepareHotspot.visibility = View.GONE
+        binding.createHotspot.visibility = View.GONE
         binding.playerView.announceForAccessibility("Game started. Video player is active.")
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
@@ -441,11 +577,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun updateUi(isGameStarted: Boolean) {
-        if (isGameStarted) {
-            showGame()
-        } else {
-            showLobby()
+    private fun updateUi() {
+        when {
+            gameViewModel.isGameStarted.value == true -> showGame()
+            gameViewModel.prepareMode.value == true -> showPrepareScreen()
+            else -> showStartScreen()
         }
     }
 

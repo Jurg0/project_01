@@ -32,6 +32,9 @@ class GameRepository(
     val playlistStore: PlaylistStore = PlaylistStore(
         java.io.File(application.filesDir, "playlists")
     ),
+    val preparedGameStore: PreparedGameStore = PreparedGameStore(
+        java.io.File(application.filesDir, "prepared")
+    ),
 ) {
 
     private val _players = MutableLiveData<List<Player>>()
@@ -97,14 +100,6 @@ class GameRepository(
         addAction(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION)
         addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION)
         addAction(WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION)
-    }
-
-    val peerListListener = WifiP2pManager.PeerListListener { peerList ->
-        val refreshedPeers = peerList.deviceList.map { Player(it, it.deviceName, false) }
-        _players.postValue(refreshedPeers)
-        if (refreshedPeers.isEmpty()) {
-            _toastMessage.postValue("No devices found")
-        }
     }
 
     private val _connectionInfo = MutableLiveData<WifiP2pInfo>()
@@ -188,6 +183,7 @@ class GameRepository(
         gameSync.shutdown()
         fileTransfer.shutdown()
         try {
+            wifiP2pManager.clearLocalServices(channel, null)
             wifiP2pManager.removeGroup(channel, null)
             channel.close()
         } catch (e: Exception) {

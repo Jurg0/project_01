@@ -15,6 +15,7 @@ class TestNetworkManager : NetworkManager {
     var onSendTo: (suspend (address: String, data: GameMessage) -> Unit)? = null
     var onShutdown: (() -> Unit)? = null
     var onConsumeNonce: ((address: String) -> String?)? = null
+    var onDisconnectClient: ((address: String) -> Unit)? = null
 
     override fun startServer() {
         onStartServer?.invoke()
@@ -38,6 +39,10 @@ class TestNetworkManager : NetworkManager {
 
     override fun consumeNonce(address: String): String? {
         return onConsumeNonce?.invoke(address)
+    }
+
+    override fun disconnectClient(address: String) {
+        onDisconnectClient?.invoke(address)
     }
 
     suspend fun emitEvent(event: NetworkEvent) {

@@ -37,14 +37,17 @@
 
         </androidx.constraintlayout.widget.ConstraintLayout>
 
-        <!-- Section labels -->
+        <!-- Section labels. Default hidden — the cold-start screen is the innocuous
+             player-facing start screen (only JOIN + the invisible GM hotspots).
+             showStartScreen()/showPrepareScreen()/showGame() toggle these at runtime. -->
         <LinearLayout
             android:id="@+id/section_labels"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:paddingHorizontal="12dp"
-            android:paddingVertical="4dp">
+            android:paddingVertical="4dp"
+            android:visibility="gone">
 
             <TextView
                 android:layout_width="0dp"
@@ -65,14 +68,15 @@
                 android:textStyle="bold" />
         </LinearLayout>
 
-        <!-- Lists: players + videos side by side -->
+        <!-- Lists: players + videos side by side. Default hidden (see section_labels). -->
         <LinearLayout
             android:id="@+id/lists_container"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="4"
             android:orientation="horizontal"
-            android:paddingHorizontal="4dp">
+            android:paddingHorizontal="4dp"
+            android:visibility="gone">
 
             <androidx.recyclerview.widget.RecyclerView
                 android:id="@+id/player_list"
@@ -104,11 +108,13 @@
             android:paddingHorizontal="4dp"
             android:paddingVertical="2dp">
 
-            <!-- Game master tools row -->
+            <!-- Game master tools row. Default hidden; shown only in prepare mode. -->
             <LinearLayout
+                android:id="@+id/gm_tools_row"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal">
+                android:orientation="horizontal"
+                android:visibility="gone">
 
                 <Button
                     android:id="@+id/add_video_button"
@@ -147,12 +153,14 @@
                     android:textSize="12sp" />
             </LinearLayout>
 
-            <!-- Saved playlists row -->
+            <!-- Saved playlists row. Default hidden; shown only in prepare mode. -->
             <LinearLayout
+                android:id="@+id/saved_playlists_row"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
-                android:orientation="horizontal">
+                android:orientation="horizontal"
+                android:visibility="gone">
 
                 <Button
                     android:id="@+id/save_playlist_button"
@@ -179,32 +187,70 @@
                     android:textSize="12sp" />
             </LinearLayout>
 
-            <!-- Session controls row -->
+            <!-- Session controls row. On the start screen this holds ONLY the visible
+                 JOIN button — CREATE is the invisible create_hotspot (undercover). -->
             <LinearLayout
+                android:id="@+id/session_controls_row"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
                 android:orientation="horizontal">
 
                 <Button
-                    android:id="@+id/create_game_button"
-                    android:layout_width="0dp"
-                    android:layout_height="44dp"
-                    android:layout_weight="1"
-                    android:layout_marginHorizontal="2dp"
-                    android:contentDescription="Create a new game session"
-                    android:text="Create Game"
-                    android:textSize="13sp" />
-
-                <Button
                     android:id="@+id/join_game_button"
-                    android:layout_width="0dp"
+                    android:layout_width="match_parent"
                     android:layout_height="44dp"
-                    android:layout_weight="1"
                     android:layout_marginHorizontal="2dp"
                     android:contentDescription="Join an existing game session"
                     android:text="Join Game"
                     android:textSize="13sp" />
+            </LinearLayout>
+
+            <!-- Prepare-mode row: set the prepared game's password and save/exit.
+                 Default hidden; shown only in prepare mode (invisible PREPARE hotspot). -->
+            <LinearLayout
+                android:id="@+id/prepare_row"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:visibility="gone">
+
+                <EditText
+                    android:id="@+id/prepare_password"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginHorizontal="2dp"
+                    android:autofillHints="password"
+                    android:hint="Password"
+                    android:inputType="text"
+                    android:textColor="@android:color/white"
+                    android:textColorHint="#80FFFFFF"
+                    android:textSize="13sp" />
+
+                <Button
+                    android:id="@+id/prepare_save_button"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:layout_marginHorizontal="2dp"
+                    android:contentDescription="Save this prepared game"
+                    android:text="Save"
+                    android:textColor="@android:color/white"
+                    android:textSize="12sp" />
+
+                <Button
+                    android:id="@+id/prepare_done_button"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:layout_marginHorizontal="2dp"
+                    android:contentDescription="Exit prepare mode"
+                    android:text="Done"
+                    android:textColor="@android:color/white"
+                    android:textSize="12sp" />
             </LinearLayout>
         </LinearLayout>
 
@@ -244,6 +290,28 @@
         android:background="@android:color/transparent"
         android:contentDescription="Double-tap for game controls"
         android:visibility="gone" />
+
+    <!-- Invisible GM hotspots on the start screen. Undercover: transparent, no
+         contentDescription, importantForAccessibility=no so TalkBack stays silent.
+         Default VISIBLE so they work on a cold start (isGameStarted never emits at
+         launch, so show*() may not have run); showGame()/showPrepareScreen() hide them.
+         PREPARE = long-press top-left; CREATE = double-tap top-right (opposite corners,
+         clear of the centered Join button, gesture-guarded against accidental taps). -->
+    <View
+        android:id="@+id/prepare_hotspot"
+        android:layout_width="40mm"
+        android:layout_height="40mm"
+        android:layout_gravity="top|start"
+        android:background="@android:color/transparent"
+        android:importantForAccessibility="no" />
+
+    <View
+        android:id="@+id/create_hotspot"
+        android:layout_width="40mm"
+        android:layout_height="40mm"
+        android:layout_gravity="top|end"
+        android:background="@android:color/transparent"
+        android:importantForAccessibility="no" />
 
     <!-- Game master controls overlay: undercover by design.
          Three minimal buttons (Prev / Play-Next / Light), revealed by double-tap on

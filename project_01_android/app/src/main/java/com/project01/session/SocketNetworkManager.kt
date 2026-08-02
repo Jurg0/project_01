@@ -230,6 +230,21 @@ class SocketNetworkManager(val port: Int = 8888) : NetworkManager {
         return clientNonces.remove(address)
     }
 
+    /**
+     * Evict a client immediately (used by the password hard-gate to kick clients that
+     * fail or never authenticate). Removing it from [clientOutputStreams] first means the
+     * next broadcast skips it even before the read loop notices the closed socket. Closing
+     * the socket unblocks [handleClient]'s read → its finally re-emits ClientDisconnected;
+     * the duplicate is harmless (roster/auth cleanup is idempotent).
+     */
+    override fun disconnectClient(address: String) {
+        clientOutputStreams.remove(address)
+        lastHeartbeat.remove(address)
+        clientNonces.remove(address)
+        clients.remove(address)?.let { try { it.close() } catch (_: Exception) {} }
+        coroutineScope.launch { _events.emit(NetworkEvent.ClientDisconnected(address)) }
+    }
+
     override fun shutdown() {
         try { serverSocket.close() } catch (_: Exception) {}
         clients.values.forEach { try { it.close() } catch (_: Exception) {} }

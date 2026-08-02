@@ -39,6 +39,11 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     private val _advancedCommand = MutableLiveData<AdvancedCommand>()
     val advancedCommand: LiveData<AdvancedCommand> = _advancedCommand
 
+    /** Start screen shows the prepared-games editor (GM only, ahead of time) vs the plain
+     *  player-facing start screen. Drives MainActivity.updateUi alongside isGameStarted. */
+    private val _prepareMode = MutableLiveData(false)
+    val prepareMode: LiveData<Boolean> = _prepareMode
+
     val playbackController: PlaybackController = PlaybackController(
         gameSync = repository.gameSync,
         scope = viewModelScope,
@@ -73,6 +78,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         postUiError = { _uiError.postValue(it) },
         onSessionStarted = { isHost -> onSessionStarted(isHost) },
         onSessionEnded = { remoteInitiated -> onSessionEnded(remoteInitiated) },
+        onClientAuthenticated = { address -> addConnectedPlayer(address) },
     )
 
     val connectionState: LiveData<ConnectionStatus> = sessionController.connectionState
@@ -206,11 +212,13 @@ class GameViewModel(application: Application, val repository: GameRepository = G
                 _uiError.postValue(UiError.Recoverable("${event.origin}: $cls: $msg"))
             }
             is NetworkEvent.ClientConnected -> {
-                sessionController.handleClientConnected()
-                if (isGameMaster()) addConnectedPlayer(event.address)
+                // Roster no longer gains a player here — a connected socket is not yet an
+                // authenticated player. The GM adds the roster entry on auth success via
+                // the onClientAuthenticated callback below.
+                sessionController.handleClientConnected(event.address)
             }
             is NetworkEvent.ClientDisconnected -> {
-                val shouldHandleRoster = sessionController.handleClientDisconnected()
+                val shouldHandleRoster = sessionController.handleClientDisconnected(event.address)
                 if (shouldHandleRoster) {
                     removeConnectedPlayer(event.address)
                     _uiError.postValue(UiError.Informational("Client disconnected: ${event.address}"))
@@ -313,6 +321,42 @@ class GameViewModel(application: Application, val repository: GameRepository = G
 
     fun joinGame(name: String, password: String) = sessionController.joinGame(name, password)
 
+    /**
+     * Player join for the new concept: stash the (auto-named) credentials and auto-discover
+     * + connect to the single game host via DNS-SD — no device-list picking. The password
+     * hard gate then decides whether the session actually starts.
+     */
+    @SuppressLint("MissingPermission") // Permission checked in MainActivity before calling
+    fun join(password: String) {
+        if (!repository.isWifiEnabled()) {
+            sessionController.postWifiOffError()
+            return
+        }
+        sessionController.joinGame(autoPlayerName(), password)
+        sessionController.startServiceDiscovery()
+    }
+
+    private fun autoPlayerName(): String =
+        android.os.Build.MODEL?.takeIf { it.isNotBlank() } ?: "Player"
+
+    /**
+     * GM CREATE (undercover): resolve the entered password to a prepared game and start it.
+     * If a prepared (playlist, password) pair matches, load its playlist and use its password;
+     * otherwise start anyway with the current/_last playlist so an onlooker can't distinguish
+     * a right vs wrong password (the screen goes blue either way) — the GM privately notices
+     * the expected video doesn't play.
+     */
+    @SuppressLint("MissingPermission") // Permission checked in MainActivity before calling
+    fun createGameForPassword(enteredPassword: String) {
+        val match = repository.preparedGameStore.findByPassword(enteredPassword)
+        if (match != null) {
+            repository.restoreVideos(match.videos.map { it.toVideo() })
+            sessionController.createGame(match.password)
+        } else {
+            sessionController.createGame(enteredPassword)
+        }
+    }
+
     @SuppressLint("MissingPermission") // Permission checked in MainActivity before calling
     fun connectToPlayer(player: Player) = sessionController.connectToPlayer(player)
 
@@ -323,26 +367,31 @@ class GameViewModel(application: Application, val repository: GameRepository = G
 
     fun isGameMaster(): Boolean = sessionController.isGameMaster()
 
-    @SuppressLint("MissingPermission") // Permission checked in MainActivity before calling
-    fun discoverPeers() {
-        if (!repository.isWifiEnabled()) {
-            sessionController.postWifiOffError()
-            return
-        }
-        repository.wifiP2pManager.discoverPeers(
-            repository.channel,
-            object : WifiP2pManager.ActionListener {
-                override fun onSuccess() {
-                    repository.showToast("Discovery initiated")
-                }
+    // --- Prepared games (GM prepares playlist+password pairs in advance) ---
 
-                override fun onFailure(reason: Int) {
-                    _uiError.postValue(UiError.Recoverable("Peer discovery failed. Check Wi-Fi.", "Retry") {
-                        discoverPeers()
-                    })
-                }
-            })
+    fun listPreparedGames(): List<String> = repository.preparedGameStore.listNames()
+
+    fun getPreparedGame(name: String): PreparedGame? = repository.preparedGameStore.load(name)
+
+    fun prepareGame(name: String, password: String, videos: List<Video>) {
+        repository.preparedGameStore.save(PreparedGame(name, password, videos.map { it.toDto() }))
     }
+
+    fun deletePreparedGame(name: String) = repository.preparedGameStore.delete(name)
+
+    /** Load a prepared game's playlist into the editor (in-memory only; no broadcast). */
+    fun loadPreparedGameIntoEditor(name: String): PreparedGame? {
+        val game = repository.preparedGameStore.load(name) ?: return null
+        repository.restoreVideos(game.videos.map { it.toVideo() })
+        return game
+    }
+
+    /** Clear the editor to start a brand-new prepared game (in-memory only). */
+    fun beginNewPreparedGame() {
+        repository.restoreVideos(emptyList())
+    }
+
+    fun setPrepareMode(on: Boolean) { _prepareMode.value = on }
 
     fun addVideo(uri: Uri) {
         viewModelScope.launch {

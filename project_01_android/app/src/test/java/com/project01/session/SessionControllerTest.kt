@@ -46,6 +46,8 @@ class SessionControllerTest {
     private val uiErrors = mutableListOf<UiError>()
     private val sessionStarts = mutableListOf<Boolean>()
     private val sessionEnds = mutableListOf<Boolean>()
+    private val authenticated = mutableListOf<String>()
+    private val disconnected = mutableListOf<String>()
     private var currentVideos: List<Video> = emptyList()
     private var thisDevice: WifiP2pDevice? = null
     private var wifiEnabled = true
@@ -67,6 +69,7 @@ class SessionControllerTest {
             postUiError = { uiErrors.add(it) },
             onSessionStarted = { sessionStarts.add(it) },
             onSessionEnded = { sessionEnds.add(it) },
+            onClientAuthenticated = { authenticated.add(it) },
         )
     }
 
@@ -80,9 +83,12 @@ class SessionControllerTest {
         currentVideos = emptyList()
         thisDevice = WifiP2pDevice().apply { deviceName = "TestDevice" }
         wifiEnabled = true
+        authenticated.clear()
+        disconnected.clear()
         network = TestNetworkManager().apply {
             onBroadcast = { msg -> broadcasts.add(msg) }
             onSendTo = { addr, msg -> sentTo.add(addr to msg) }
+            onDisconnectClient = { addr -> disconnected.add(addr) }
         }
         gameSync = GameSync(network)
         playbackController = PlaybackController(
@@ -111,7 +117,7 @@ class SessionControllerTest {
     }
 
     @Test
-    fun `handleConnectionInfo as client sets CONNECTED state and starts session as client`() {
+    fun `handleConnectionInfo as client sets CONNECTED but does NOT start session (password gate)`() {
         val controller = newController()
         var connectionState: ConnectionStatus? = null
         controller.connectionState.observeForever { connectionState = it }
@@ -123,7 +129,9 @@ class SessionControllerTest {
         })
 
         assertEquals(ConnectionStatus.CONNECTED, connectionState)
-        assertEquals(listOf(false), sessionStarts)
+        // Group formation is "connecting/authenticating", not "started" — the client
+        // session starts only on PasswordResponseMessage(success).
+        assertTrue(sessionStarts.isEmpty())
         assertFalse(controller.isGameMaster())
     }
 
@@ -148,7 +156,7 @@ class SessionControllerTest {
         var connectionState: ConnectionStatus? = null
         controller.connectionState.observeForever { connectionState = it }
 
-        controller.handleClientConnected()
+        controller.handleClientConnected("192.168.49.1")
 
         assertEquals(ConnectionStatus.CONNECTED, connectionState)
     }
@@ -160,9 +168,9 @@ class SessionControllerTest {
             groupFormed = true
             isGroupOwner = true
         })
-        // After handleConnectionInfo, state is HOST. After handleClientConnected (no-op for GM),
-        // state should still be HOST.
-        controller.handleClientConnected()
+        // After handleConnectionInfo, state is HOST. handleClientConnected arms an auth
+        // timeout for the client but does not change connection state → still HOST.
+        controller.handleClientConnected("peer")
 
         var connectionState: ConnectionStatus? = null
         controller.connectionState.observeForever { connectionState = it }
@@ -178,7 +186,7 @@ class SessionControllerTest {
             groupOwnerAddress = InetAddress.getByName("192.168.49.1")
         })
 
-        val shouldHandle = controller.handleClientDisconnected()
+        val shouldHandle = controller.handleClientDisconnected("192.168.49.1")
 
         assertFalse(shouldHandle)
         // No direct DISCONNECTED state since reconnect is attempted. (We don't assert
@@ -193,7 +201,7 @@ class SessionControllerTest {
             isGroupOwner = true
         })
 
-        val shouldHandle = controller.handleClientDisconnected()
+        val shouldHandle = controller.handleClientDisconnected("peer")
 
         assertTrue(shouldHandle)
     }
@@ -208,7 +216,7 @@ class SessionControllerTest {
         })
         controller.handleEndGame()
 
-        val shouldHandle = controller.handleClientDisconnected()
+        val shouldHandle = controller.handleClientDisconnected("192.168.49.1")
 
         assertFalse(shouldHandle)
     }
@@ -263,8 +271,12 @@ class SessionControllerTest {
         controller.handlePasswordMessage(PasswordMessage(correctHash), senderAddress = "peer")
         advanceUntilIdle()
 
-        val response = broadcasts.filterIsInstance<PasswordResponseMessage>().single()
+        // Response goes to the specific joiner (sendTo), not broadcast.
+        val response = sentTo.filter { it.first == "peer" }.map { it.second }
+            .filterIsInstance<PasswordResponseMessage>().single()
         assertTrue(response.success)
+        assertEquals(listOf("peer"), authenticated)
+        assertTrue(disconnected.isEmpty())
     }
 
     @Test
@@ -280,8 +292,12 @@ class SessionControllerTest {
         controller.handlePasswordMessage(PasswordMessage("wrong-hash"), senderAddress = "peer")
         advanceUntilIdle()
 
-        val response = broadcasts.filterIsInstance<PasswordResponseMessage>().single()
+        val response = sentTo.filter { it.first == "peer" }.map { it.second }
+            .filterIsInstance<PasswordResponseMessage>().single()
         assertFalse(response.success)
+        // Hard gate: a rejected client is disconnected, not left in the broadcast set.
+        assertEquals(listOf("peer"), disconnected)
+        assertTrue(authenticated.isEmpty())
     }
 
     @Test
@@ -297,8 +313,10 @@ class SessionControllerTest {
         controller.handlePasswordMessage(PasswordMessage("any-hash"), senderAddress = "peer")
         advanceUntilIdle()
 
-        val response = broadcasts.filterIsInstance<PasswordResponseMessage>().single()
+        val response = sentTo.filter { it.first == "peer" }.map { it.second }
+            .filterIsInstance<PasswordResponseMessage>().single()
         assertFalse(response.success)
+        assertEquals(listOf("peer"), disconnected)
     }
 
     @Test
@@ -318,7 +336,9 @@ class SessionControllerTest {
         advanceUntilIdle()
 
         // pushInitialStateTo first sends VideoListMessage, then PlaybackCommand
+        // (after the per-client PasswordResponseMessage, which we filter out here).
         val toPeer = sentTo.filter { it.first == "peer" }.map { it.second }
+            .filter { it !is PasswordResponseMessage }
         assertEquals(2, toPeer.size)
         assertTrue(toPeer[0] is VideoListMessage)
         val cmd = toPeer[1] as PlaybackCommand
@@ -337,12 +357,14 @@ class SessionControllerTest {
         advanceUntilIdle()
 
         assertEquals(true, controller.passwordVerified.value)
+        // Password success is the gate: the client session starts only now.
+        assertEquals(listOf(false), sessionStarts)
         val nameMsg = broadcasts.filterIsInstance<PlayerNameMessage>().single()
         assertEquals("Alice", nameMsg.playerName)
     }
 
     @Test
-    fun `handlePasswordResponseMessage with failure does not send player name`() = runTest(dispatcher) {
+    fun `handlePasswordResponseMessage with failure returns to start and does not send player name`() = runTest(dispatcher) {
         val controller = newController()
         controller.joinGame("Alice", "secret")
         broadcasts.clear()
@@ -352,6 +374,10 @@ class SessionControllerTest {
 
         assertEquals(false, controller.passwordVerified.value)
         assertTrue(broadcasts.none { it is PlayerNameMessage })
+        // Wrong password → tear down cleanly and return to the start screen.
+        assertTrue(sessionStarts.isEmpty())
+        assertEquals(ConnectionStatus.DISCONNECTED, controller.connectionState.value)
+        verify(wifiManager).removeGroup(any(), anyOrNull())
     }
 
     @Test

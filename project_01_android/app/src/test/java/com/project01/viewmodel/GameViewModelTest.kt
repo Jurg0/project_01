@@ -488,7 +488,8 @@ class GameViewModelTest {
             PasswordMessage(passwordHash = correctHash), "192.168.1.5"
         )
 
-        verify(mockGameSync).broadcast(PasswordResponseMessage(success = true))
+        // Per-client response (sendTo), not broadcast — the hard gate answers the joiner privately.
+        verify(mockGameSync).sendTo("192.168.1.5", PasswordResponseMessage(success = true))
     }
 
     @Test
@@ -503,7 +504,7 @@ class GameViewModelTest {
             PasswordMessage(passwordHash = wrongHash), "192.168.1.5"
         )
 
-        verify(mockGameSync).broadcast(PasswordResponseMessage(success = false))
+        verify(mockGameSync).sendTo("192.168.1.5", PasswordResponseMessage(success = false))
     }
 
     @Test
@@ -516,7 +517,7 @@ class GameViewModelTest {
             PasswordMessage(passwordHash = "somehash"), "192.168.1.5"
         )
 
-        verify(mockGameSync).broadcast(PasswordResponseMessage(success = false))
+        verify(mockGameSync).sendTo("192.168.1.5", PasswordResponseMessage(success = false))
     }
 
     @Test

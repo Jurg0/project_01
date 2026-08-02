@@ -22,9 +22,10 @@ class WifiDirectBroadcastReceiver(
                 val state = intent.getIntExtra(WifiP2pManager.EXTRA_WIFI_STATE, -1)
                 repository.isWifiP2pEnabled = state == WifiP2pManager.WIFI_P2P_STATE_ENABLED
             }
-            WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION -> {
-                manager.requestPeers(channel, repository.peerListListener)
-            }
+            // PEERS_CHANGED intentionally unhandled: the roster (_players) is now solely
+            // the GM's authenticated-player list built from socket events. Joiners
+            // auto-connect via DNS-SD service discovery, so we no longer requestPeers
+            // (which used to wholesale-replace and clear the roster).
             WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION -> {
                 manager.requestConnectionInfo(channel, repository.connectionInfoListener)
             }

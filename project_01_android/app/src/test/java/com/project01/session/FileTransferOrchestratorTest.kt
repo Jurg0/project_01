@@ -225,4 +225,46 @@ class FileTransferOrchestratorTest {
 
         assertTrue(orchestrator.receivedVideoFiles.isEmpty())
     }
+
+    /**
+     * Regression: a burst of Success events for the same playlist must swap EVERY
+     * entry to its local file:// URI. This only holds when videosProvider reflects
+     * the previous swap synchronously — the production wiring reads GameRepository's
+     * currentVideos mirror, not the postValue-lagged videos.value. With a lagging
+     * provider each swap rebuilds from the stale content:// list and the last write
+     * wins, leaving all-but-one video unplayable on players (the field bug this fixes).
+     */
+    @Test
+    fun `burst of successes swaps every entry when provider reflects prior swaps`() {
+        isGameMaster = false
+        // Synchronous mirror: updateVideos writes back into what videosProvider reads,
+        // mirroring GameRepository.restoreVideos → currentVideos.
+        val mirror = mutableListOf(
+            Video(Uri.parse("content://gm/a.mp4"), "a.mp4"),
+            Video(Uri.parse("content://gm/b.mp4"), "b.mp4"),
+            Video(Uri.parse("content://gm/c.mp4"), "c.mp4"),
+        )
+        val orchestrator = FileTransferOrchestrator(
+            gameSync = sync,
+            fileTransfer = fileTransfer,
+            filesDir = tmpDir,
+            contentResolver = mock(),
+            scope = scope,
+            isGameMaster = { isGameMaster },
+            findFreePort = { 9999 },
+            videosProvider = { mirror.toList() },
+            updateVideos = { mirror.clear(); mirror.addAll(it) },
+        )
+
+        orchestrator.onFileTransferSuccess("a.mp4")
+        orchestrator.onFileTransferSuccess("b.mp4")
+        orchestrator.onFileTransferSuccess("c.mp4")
+
+        // Every entry ends up pointing at its local file — no swap was clobbered.
+        listOf("a.mp4", "b.mp4", "c.mp4").forEach { name ->
+            val entry = mirror.single { it.title == name }
+            assertEquals(Uri.fromFile(File(tmpDir, name)), entry.uri)
+        }
+        assertEquals(setOf("a.mp4", "b.mp4", "c.mp4"), orchestrator.receivedVideoFiles)
+    }
 }

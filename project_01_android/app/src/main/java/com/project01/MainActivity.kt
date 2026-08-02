@@ -294,7 +294,9 @@ class MainActivity : AppCompatActivity() {
                     videoAdapter.updateProgress(event.fileName, event.progress)
                 }
                 is com.project01.session.FileTransferEvent.Success -> {
-                    gameViewModel.onFileTransferSuccess(event.fileName)
+                    // The playlist URI swap is driven losslessly from the repository's
+                    // onFileReceived callback — NOT here. This LiveData coalesces bursts
+                    // and would drop Success events, so this branch is cosmetic only.
                     Toast.makeText(this, "Transfer complete: ${event.fileName}", Toast.LENGTH_SHORT).show()
                 }
                 is com.project01.session.FileTransferEvent.Failure -> {

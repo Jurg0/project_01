@@ -53,7 +53,10 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         scope = viewModelScope,
         isGameMaster = { isGameMaster() },
         findFreePort = { repository.findFreePort() },
-        videosProvider = { videos.value },
+        // Read the synchronous mirror, not videos.value — the swap does a
+        // read-modify-write per received file and rapid Success events must each
+        // see the previous swap (videos.value lags a postValue). See currentVideos.
+        videosProvider = { repository.currentVideos },
         updateVideos = { repository.restoreVideos(it) },
     )
 
@@ -92,6 +95,11 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     init {
         repository.gameSyncEvent.observeForever(gameSyncEventObserver)
         repository.connectionInfo.observeForever(connectionInfoObserver)
+        // Drive the player-side content:// → file:// swap from EVERY FileTransfer
+        // Success. This bypasses the coalescing fileTransferEvent LiveData (which
+        // dropped Success events during multi-video pulls, leaving all but the first
+        // video unplayable on players — field bug). See GameRepository.onFileReceived.
+        repository.onFileReceived = { fileName -> onFileTransferSuccess(fileName) }
         initializeBluetooth()
         restoreLastPlaylist()
     }

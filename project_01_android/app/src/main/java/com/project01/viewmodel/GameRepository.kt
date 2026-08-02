@@ -40,6 +40,16 @@ class GameRepository(
     private val _videos = MutableLiveData<List<Video>>()
     val videos: LiveData<List<Video>> = _videos
 
+    // Synchronous mirror of the current playlist. LiveData.value lags a postValue
+    // (postValue defers setValue to the main thread), so a burst of file-transfer
+    // Success events that each read `videos.value`, swap one entry, and post back
+    // would build on a stale list and clobber each other. The mirror is read/written
+    // synchronously, keeping the per-file URI swap lossless. Updated in restoreVideos
+    // alongside the LiveData.
+    @Volatile
+    private var videosMirror: List<Video> = emptyList()
+    val currentVideos: List<Video> get() = videosMirror
+
     private val _isGameStarted = MutableLiveData<Boolean>()
     val isGameStarted: LiveData<Boolean> = _isGameStarted
 
@@ -51,6 +61,14 @@ class GameRepository(
 
     private val _fileTransferEvent = MutableLiveData<FileTransferEvent>()
     val fileTransferEvent: LiveData<FileTransferEvent> = _fileTransferEvent
+
+    // Invoked on EVERY FileTransfer Success — drives the player-side content:// →
+    // file:// playlist swap. Deliberately NOT routed through fileTransferEvent above:
+    // that LiveData is fed by postValue, which coalesces bursts and silently drops
+    // intermediate values. During a multi-video pull the flood of Progress events
+    // overwrote the Success values, so most videos never got their URI swapped and
+    // only the first video ever played on players (field bug). Set by GameViewModel.
+    var onFileReceived: ((String) -> Unit)? = null
 
     private val _gameSyncEvent = MutableLiveData<NetworkEvent>()
     val gameSyncEvent: LiveData<NetworkEvent> = _gameSyncEvent
@@ -111,8 +129,11 @@ class GameRepository(
     }
 
     private fun observeFileTransferEvents() {
-        fileTransfer.events.onEach {
-            _fileTransferEvent.postValue(it)
+        fileTransfer.events.onEach { event ->
+            // Drive the lossless swap first so no Success is ever dropped, THEN post
+            // to the coalescing LiveData that only feeds cosmetic progress/toasts.
+            if (event is FileTransferEvent.Success) onFileReceived?.invoke(event.fileName)
+            _fileTransferEvent.postValue(event)
         }.launchIn(coroutineScope)
     }
 
@@ -129,6 +150,7 @@ class GameRepository(
     }
 
     fun restoreVideos(videos: List<Video>) {
+        videosMirror = videos
         _videos.postValue(videos)
     }
 

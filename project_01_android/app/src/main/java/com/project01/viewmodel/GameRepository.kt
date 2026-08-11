@@ -93,6 +93,30 @@ class GameRepository(
         application.startActivity(intent)
     }
 
+    /**
+     * Whether Wi-Fi Direct scanning can work. On API 33+ we hold NEARBY_WIFI_DEVICES with
+     * `neverForLocation`, so the system Location toggle is irrelevant → always true. On
+     * API < 33, P2P discovery silently returns nothing unless Location is on.
+     */
+    fun isLocationEnabled(): Boolean {
+        if (android.os.Build.VERSION.SDK_INT >= 33) return true
+        val lm = application.getSystemService(Context.LOCATION_SERVICE) as? android.location.LocationManager
+            ?: return true
+        return if (android.os.Build.VERSION.SDK_INT >= 28) {
+            lm.isLocationEnabled
+        } else {
+            @Suppress("DEPRECATION")
+            lm.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER) ||
+                lm.isProviderEnabled(android.location.LocationManager.NETWORK_PROVIDER)
+        }
+    }
+
+    fun openLocationSettings() {
+        val intent = android.content.Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS)
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        application.startActivity(intent)
+    }
+
     private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     val intentFilter = IntentFilter().apply {

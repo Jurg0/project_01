@@ -1,6 +1,8 @@
 package com.project01.session
 
 import android.annotation.SuppressLint
+import android.os.Build
+import android.util.Log
 import android.net.wifi.p2p.WifiP2pConfig
 import android.net.wifi.p2p.WifiP2pDevice
 import android.net.wifi.p2p.WifiP2pInfo
@@ -45,6 +47,10 @@ class SessionController(
     private val onSessionStarted: (isHost: Boolean) -> Unit,
     private val onSessionEnded: (remoteInitiated: Boolean) -> Unit,
     private val onClientAuthenticated: (address: String) -> Unit = {},
+    // Location must be ON for Wi-Fi Direct scanning on API < 33 (permission alone isn't
+    // enough); the provider returns true when it isn't required. Defaults keep tests simple.
+    private val isLocationEnabled: () -> Boolean = { true },
+    private val openLocationSettings: () -> Unit = {},
 ) {
     private val _connectionState = MutableLiveData<ConnectionStatus>()
     val connectionState: LiveData<ConnectionStatus> = _connectionState
@@ -78,6 +84,9 @@ class SessionController(
     private var dnsSdListenersSet = false
     private val triedHostAddresses = mutableSetOf<String>()
     private var serviceRequest: WifiP2pDnsSdServiceRequest? = null
+    // Temporary field-diagnostic flags (one-shot on-screen toasts; logs are the full story).
+    private var diagServiceSeen = false
+    private var diagLastFailure = Int.MIN_VALUE
 
     init {
         observeReconnectionState()
@@ -275,14 +284,16 @@ class SessionController(
             return
         }
         _connectionState.postValue(ConnectionStatus.CONNECTING)
-        wifiP2pManager.createGroup(channel, object : WifiP2pManager.ActionListener {
+        val listener = object : WifiP2pManager.ActionListener {
             override fun onSuccess() {
                 // Group formed → advertise the DNS-SD service so joiners auto-discover us.
                 // (The connection also arrives via connectionInfoListener in the repository.)
+                Log.d(TAG, "createGroup: onSuccess")
                 advertiseGameService()
             }
 
             override fun onFailure(reason: Int) {
+                Log.w(TAG, "createGroup: onFailure ${reasonName(reason)}")
                 _connectionState.postValue(ConnectionStatus.DISCONNECTED)
                 val message = when (reason) {
                     WifiP2pManager.P2P_UNSUPPORTED -> "Wi-Fi Direct not supported on this device"
@@ -292,7 +303,28 @@ class SessionController(
                 }
                 postUiError(UiError.Recoverable(message, "Retry") { createGame(password) })
             }
-        })
+        }
+        // Force the group onto the 2.4 GHz band (API 29+). Older player phones (e.g. A20e)
+        // often can't discover/join a Wi-Fi Direct group the newer GM created on 5 GHz —
+        // 2.4 GHz maximizes cross-device compatibility. Falls back to the default band if the
+        // config can't be built (older API, or a device that rejects a band config).
+        val config = if (Build.VERSION.SDK_INT >= 29) {
+            try {
+                WifiP2pConfig.Builder()
+                    .setGroupOperatingBand(WifiP2pConfig.GROUP_OWNER_BAND_2GHZ)
+                    .build()
+            } catch (e: Exception) {
+                Log.w(TAG, "2.4GHz group config unsupported, using default band", e)
+                null
+            }
+        } else null
+        if (config != null) {
+            Log.d(TAG, "createGroup: forcing 2.4GHz band")
+            wifiP2pManager.createGroup(channel, config, listener)
+        } else {
+            Log.d(TAG, "createGroup: default band")
+            wifiP2pManager.createGroup(channel, listener)
+        }
     }
 
     fun joinGame(name: String, password: String) {
@@ -361,9 +393,11 @@ class SessionController(
             "port" to gameSync.port.toString(),
         )
         val serviceInfo = WifiP2pDnsSdServiceInfo.newInstance(SERVICE_INSTANCE, SERVICE_TYPE, record)
+        Log.d(TAG, "advertiseGameService: adding local service (attempt $attempt, port=${gameSync.port})")
         wifiP2pManager.addLocalService(channel, serviceInfo, object : WifiP2pManager.ActionListener {
-            override fun onSuccess() {}
+            override fun onSuccess() { Log.d(TAG, "advertiseGameService: onSuccess — service is advertised") }
             override fun onFailure(reason: Int) {
+                Log.w(TAG, "advertiseGameService: onFailure ${reasonName(reason)}")
                 if (reason == WifiP2pManager.BUSY && attempt < 3) {
                     scope.launch { delay(1000); advertiseGameService(attempt + 1) }
                 } else {
@@ -391,23 +425,49 @@ class SessionController(
      */
     @SuppressLint("MissingPermission") // Permission checked in MainActivity before joining
     fun startServiceDiscovery() {
+        // On API < 33 Wi-Fi Direct scanning silently returns nothing unless the system
+        // Location toggle is on (the permission alone isn't enough). Fail fast with a clear
+        // message instead of a 60s dead wait. (Provider returns true when not required.)
+        if (!isLocationEnabled()) {
+            Log.w(TAG, "startServiceDiscovery: Location is OFF — P2P discovery cannot work on this device")
+            postUiError(UiError.Recoverable(
+                "Turn on Location to find the game.", "Location settings") { openLocationSettings() })
+            return
+        }
         hasInitiatedConnect = false
         triedHostAddresses.clear()
+        diagServiceSeen = false
+        diagLastFailure = Int.MIN_VALUE
         setupDnsSdListeners()
+        // Fresh service request — some OEM stacks silently drop a stale one.
+        try { wifiP2pManager.clearServiceRequests(channel, null) } catch (_: Exception) {}
         if (serviceRequest == null) {
-            serviceRequest = WifiP2pDnsSdServiceRequest.newInstance(SERVICE_TYPE)
+            // Untyped request (all DNS-SD services) — a type-filtered request is unreliable
+            // on some stacks. We filter by instance name in onHostFound instead.
+            serviceRequest = WifiP2pDnsSdServiceRequest.newInstance()
         }
-        wifiP2pManager.addServiceRequest(channel, serviceRequest, null)
+        wifiP2pManager.addServiceRequest(channel, serviceRequest, loggingListener("addServiceRequest"))
+        Log.d(TAG, "startServiceDiscovery: begin (type=$SERVICE_TYPE)")
         discoveryJob?.cancel()
         discoveryJob = scope.launch {
             val started = System.currentTimeMillis()
+            var cycle = 0
             while (isActive && !hasInitiatedConnect) {
+                cycle++
+                Log.d(TAG, "discovery cycle $cycle")
+                // Keep an active peer scan running: many OEM Wi-Fi Direct stacks (older
+                // Samsung especially) only deliver DNS-SD service responses while
+                // discoverPeers is in progress — discoverServices alone finds nothing.
+                // This is the key cross-device fix.
+                discoverPeersOnce()
                 discoverServicesOnce()
+                logPeers()   // diagnostic: does this device even see the GM as a peer?
                 delay(DISCOVERY_RETRY_MS)
                 if (System.currentTimeMillis() - started > DISCOVERY_OVERALL_TIMEOUT_MS) {
-                    postUiError(UiError.Recoverable("No game found. Check the password and retry.", "Retry") {
-                        startServiceDiscovery()
-                    })
+                    Log.w(TAG, "discovery timed out (${DISCOVERY_OVERALL_TIMEOUT_MS}ms), no host found")
+                    postUiError(UiError.Recoverable(
+                        "Couldn't find a game nearby. Make sure Wi-Fi and Location are on and you're near the host, then retry.",
+                        "Retry") { startServiceDiscovery() })
                     stopServiceDiscovery()
                     return@launch
                 }
@@ -420,16 +480,27 @@ class SessionController(
         dnsSdListenersSet = true
         wifiP2pManager.setDnsSdResponseListeners(
             channel,
-            WifiP2pManager.DnsSdServiceResponseListener { instanceName, _, srcDevice ->
+            WifiP2pManager.DnsSdServiceResponseListener { instanceName, registrationType, srcDevice ->
+                Log.d(TAG, "DNS-SD response: instance=$instanceName type=$registrationType from=${srcDevice.deviceName}/${srcDevice.deviceAddress}")
+                if (!diagServiceSeen) {
+                    diagServiceSeen = true
+                    postUiError(UiError.Informational("Saw service: $instanceName"))
+                }
                 onHostFound(instanceName, srcDevice)
             },
-            WifiP2pManager.DnsSdTxtRecordListener { _, _, _ -> /* proto/port available if needed */ },
+            WifiP2pManager.DnsSdTxtRecordListener { fullDomain, txt, srcDevice ->
+                Log.d(TAG, "DNS-SD txt: domain=$fullDomain record=$txt from=${srcDevice.deviceAddress}")
+            },
         )
     }
 
     private fun onHostFound(instanceName: String, srcDevice: WifiP2pDevice) {
-        if (instanceName != SERVICE_INSTANCE) return
+        if (instanceName != SERVICE_INSTANCE) {
+            Log.d(TAG, "onHostFound: ignoring '$instanceName' (want '$SERVICE_INSTANCE')")
+            return
+        }
         if (hasInitiatedConnect || srcDevice.deviceAddress in triedHostAddresses) return
+        Log.d(TAG, "onHostFound: connecting to ${srcDevice.deviceName}/${srcDevice.deviceAddress}")
         hasInitiatedConnect = true
         triedHostAddresses += srcDevice.deviceAddress
         stopServiceDiscovery()
@@ -445,16 +516,61 @@ class SessionController(
         serviceRequest?.let { req ->
             try { wifiP2pManager.removeServiceRequest(channel, req, null) } catch (_: Exception) {}
         }
+        try { wifiP2pManager.stopPeerDiscovery(channel, null) } catch (_: Exception) {}
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun discoverPeersOnce() {
+        // We don't consume the peer list for connecting (roster comes from socket auth);
+        // this only keeps the P2P scan active so DNS-SD responses are delivered.
+        wifiP2pManager.discoverPeers(channel, loggingListener("discoverPeers"))
+    }
+
+    /** Diagnostic only: log the peers this device currently sees. If the GM (an autonomous
+     *  group owner) shows up here but no DNS-SD response arrives, the service advertising /
+     *  band is the problem, not visibility. */
+    @SuppressLint("MissingPermission")
+    private fun logPeers() {
+        wifiP2pManager.requestPeers(channel) { peers ->
+            val list = peers.deviceList
+            Log.d(TAG, "peers seen: ${list.size} -> " +
+                list.joinToString { "${it.deviceName}/${it.deviceAddress} GO=${it.isGroupOwner} status=${it.status}" })
+        }
     }
 
     @SuppressLint("MissingPermission")
     private fun discoverServicesOnce() {
         wifiP2pManager.discoverServices(channel, object : WifiP2pManager.ActionListener {
-            override fun onSuccess() {}
+            override fun onSuccess() { Log.d(TAG, "discoverServices: onSuccess") }
             override fun onFailure(reason: Int) {
+                Log.w(TAG, "discoverServices: onFailure ${reasonName(reason)}")
+                if (reason != diagLastFailure) {
+                    diagLastFailure = reason
+                    postUiError(UiError.Informational("Scan issue: ${reasonName(reason)}"))
+                }
+                if (reason == WifiP2pManager.NO_SERVICE_REQUESTS) {
+                    // The framework dropped our service request — re-add it for the next cycle.
+                    try {
+                        wifiP2pManager.addServiceRequest(channel, serviceRequest, loggingListener("re-addServiceRequest"))
+                    } catch (_: Exception) {}
+                }
                 // BUSY/ERROR: the retry loop tries again after DISCOVERY_RETRY_MS.
             }
         })
+    }
+
+    /** ActionListener that just logs — for the fire-and-forget P2P discovery calls. */
+    private fun loggingListener(op: String) = object : WifiP2pManager.ActionListener {
+        override fun onSuccess() { Log.d(TAG, "$op: onSuccess") }
+        override fun onFailure(reason: Int) { Log.w(TAG, "$op: onFailure ${reasonName(reason)}") }
+    }
+
+    private fun reasonName(reason: Int): String = when (reason) {
+        WifiP2pManager.ERROR -> "ERROR(0)"
+        WifiP2pManager.P2P_UNSUPPORTED -> "P2P_UNSUPPORTED(1)"
+        WifiP2pManager.BUSY -> "BUSY(2)"
+        WifiP2pManager.NO_SERVICE_REQUESTS -> "NO_SERVICE_REQUESTS(3)"
+        else -> "reason=$reason"
     }
 
     @SuppressLint("MissingPermission") // Permission checked in MainActivity before calling
@@ -518,6 +634,9 @@ class SessionController(
     }
 
     companion object {
+        /** Logcat tag for the temporary join/discovery diagnostics: `adb logcat -s P2pJoin`. */
+        private const val TAG = "P2pJoin"
+
         const val END_GAME_DRAIN_MS = 500L
 
         // DNS-SD service identity the GM advertises and joiners look for.

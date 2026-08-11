@@ -6,6 +6,24 @@
 
 Android multiplayer game app where up to 20 smartphones connect via Wi-Fi Direct. One or more devices act as hidden "game masters" controlling video playback, screen state, and torch on all connected player devices. Players walk through a woods-based narrative experience. Game masters remain undercover — their UI is identical to players but with invisible controls.
 
+## Game Master controls (undercover)
+
+The start screen shows **only a visible JOIN button**. Everything the game master needs is hidden behind invisible touch targets so the GM's device looks identical to a player's. Each hotspot is a ~40 mm patch in a screen corner (or the centre) and only responds on the screen noted.
+
+| Action | Where | Gesture | What happens |
+|--------|-------|---------|--------------|
+| **Prepare a game** | **Top-left** corner (start screen) | **Long-press** | Opens the prepared-games manager to create/edit/delete a game — its playlist **and** password. Do this ahead of time (e.g. the day before). |
+| **Create / start a game** | **Top-right** corner (start screen) | **Double-tap** | Prompts for a password (dialog looks identical to JOIN). It matches the password to a prepared game, loads that playlist, and starts immediately — the screen goes to the blue safe-screen. |
+| **Join** (players) | The visible **JOIN** button | Tap | Enter the password (discovered out-of-app); the app auto-finds the host and connects. |
+| **Show/hide GM overlay** | **Centre** of the screen (during a game) | **Double-tap** | Reveals the minimal Prev / Play-Next / Light controls. |
+| **End the game** | **Centre** of the screen (during a game) | **Long-press** | Confirms, then ends the session for everyone. |
+
+Notes:
+- **Prepare vs. Create:** *Prepare* only saves a (playlist + password) pair — it does **not** start anything or form a Wi-Fi Direct group. *Create* is what actually starts the game on-site, using the prepared password to pick the right playlist.
+- If the entered password matches no prepared game, Create still starts a game (with the last-used/empty playlist) so an onlooker can't tell a wrong password from a right one; the GM simply notices the expected video doesn't play.
+- The corner hotspots are live **only on the start screen** — they're disabled during a game and in prepare mode, so a stray corner tap can't fire them mid-session.
+- A paired Bluetooth presenter also drives a game master: page back/forward = Prev/Next, and the "Mark" button toggles the light.
+
 ## Prerequisites
 
 - **Android Studio** (Arctic Fox or later recommended)

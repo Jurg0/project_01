@@ -134,91 +134,14 @@ class MainActivity : AppCompatActivity() {
             openDocumentLauncher.launch(arrayOf("video/*"))
         }
 
-        binding.savePlaylistButton.setOnClickListener { showSavePlaylistDialog() }
-        binding.loadPlaylistButton.setOnClickListener { showLoadPlaylistDialog() }
-
         // Prepare mode: persist the current (playlist + password) pair, or exit.
         binding.prepareSaveButton.setOnClickListener { savePreparedGame() }
-        binding.prepareDoneButton.setOnClickListener {
-            editingPreparedName = null
-            gameViewModel.setPrepareMode(false)
-        }
-
-        binding.turnOffScreenButton.setOnClickListener {
-            if (lightsAndScreen.isScreenOff) {
-                gameViewModel.turnOnScreen()
-            } else {
-                gameViewModel.turnOffScreen()
-            }
-        }
-
-        binding.deactivateTorchButton.setOnClickListener {
-            if (lightsAndScreen.isTorchOn) {
-                gameViewModel.deactivateTorch()
-            } else {
-                gameViewModel.activateTorch()
-            }
-        }
-
+        binding.prepareDoneButton.setOnClickListener { onPrepareDone() }
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (gmControls.dispatchKeyEvent(event)) return true
         return super.dispatchKeyEvent(event)
-    }
-
-    private fun showSavePlaylistDialog() {
-        val current = gameViewModel.videos.value
-        if (current.isNullOrEmpty()) {
-            Toast.makeText(this, "Playlist is empty", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val input = android.widget.EditText(this).apply {
-            hint = "Playlist name"
-            setSingleLine()
-        }
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Save Playlist As")
-            .setView(input)
-            .setPositiveButton("Save") { _, _ ->
-                val name = input.text.toString().trim()
-                if (name.isNotEmpty()) {
-                    gameViewModel.savePlaylistAs(name)
-                    Toast.makeText(this, "Saved \"$name\"", Toast.LENGTH_SHORT).show()
-                }
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
-    }
-
-    private fun showLoadPlaylistDialog() {
-        val names = gameViewModel.listSavedPlaylists()
-        if (names.isEmpty()) {
-            Toast.makeText(this, "No saved playlists", Toast.LENGTH_SHORT).show()
-            return
-        }
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Load Playlist")
-            .setItems(names.toTypedArray()) { _, which ->
-                val name = names[which]
-                gameViewModel.loadNamedPlaylist(name)
-                Toast.makeText(this, "Loaded \"$name\"", Toast.LENGTH_SHORT).show()
-            }
-            .setNeutralButton("Delete…") { _, _ -> showDeletePlaylistDialog(names) }
-            .setNegativeButton("Cancel", null)
-            .show()
-    }
-
-    private fun showDeletePlaylistDialog(names: List<String>) {
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Delete Playlist")
-            .setItems(names.toTypedArray()) { _, which ->
-                val name = names[which]
-                gameViewModel.deleteSavedPlaylist(name)
-                Toast.makeText(this, "Deleted \"$name\"", Toast.LENGTH_SHORT).show()
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
     }
 
     // --- Undercover GM hotspots (start screen) ---
@@ -290,19 +213,46 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun savePreparedGame() {
+    /** Save the prepared game being edited. Returns true on success, false if it couldn't
+     *  save (no game in progress, or no password) — the caller uses this to decide whether
+     *  it's safe to leave prepare mode. */
+    private fun savePreparedGame(): Boolean {
         val name = editingPreparedName
         if (name.isNullOrEmpty()) {
             Toast.makeText(this, "No game being edited", Toast.LENGTH_SHORT).show()
-            return
+            return false
         }
         val password = binding.preparePassword.text.toString().trim()
         if (password.isEmpty()) {
             Toast.makeText(this, "Set a password first", Toast.LENGTH_SHORT).show()
-            return
+            return false
         }
         gameViewModel.prepareGame(name, password, gameViewModel.videos.value ?: emptyList())
         Toast.makeText(this, "Saved \"$name\"", Toast.LENGTH_SHORT).show()
+        return true
+    }
+
+    /** "Done": leave prepare mode, but never silently drop unsaved work. */
+    private fun onPrepareDone() {
+        val name = editingPreparedName
+        val password = binding.preparePassword.text.toString().trim()
+        if (name == null || !gameViewModel.preparedGameHasUnsavedChanges(name, password)) {
+            exitPrepareMode()
+            return
+        }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Unsaved changes")
+            .setMessage("Save this game before leaving?")
+            // Only leave if the save actually succeeds (e.g. a password is set).
+            .setPositiveButton("Save") { _, _ -> if (savePreparedGame()) exitPrepareMode() }
+            .setNegativeButton("Discard") { _, _ -> exitPrepareMode() }
+            .setNeutralButton("Cancel", null)
+            .show()
+    }
+
+    private fun exitPrepareMode() {
+        editingPreparedName = null
+        gameViewModel.setPrepareMode(false)
     }
 
     private fun showEndGameDialog() {
@@ -488,13 +438,10 @@ class MainActivity : AppCompatActivity() {
         binding.errorBanner.visibility = View.GONE
         binding.mainContent.visibility = View.VISIBLE
         binding.playerContainer.visibility = View.GONE
-        binding.sectionLabels.visibility = View.GONE
+        binding.prepareHeader.visibility = View.GONE
         binding.listsContainer.visibility = View.GONE
-        binding.buttonBar.visibility = View.VISIBLE
-        binding.sessionControlsRow.visibility = View.VISIBLE   // JOIN
-        binding.gmToolsRow.visibility = View.GONE
-        binding.savedPlaylistsRow.visibility = View.GONE
-        binding.prepareRow.visibility = View.GONE
+        binding.buttonBar.visibility = View.GONE
+        binding.joinPanel.visibility = View.VISIBLE            // centred JOIN
         binding.connectivityIndicator.visibility = View.VISIBLE
         binding.invisibleResumeButton.visibility = View.GONE
         // Undercover GM affordances live only here.
@@ -522,13 +469,18 @@ class MainActivity : AppCompatActivity() {
         binding.errorBanner.visibility = View.GONE
         binding.mainContent.visibility = View.VISIBLE
         binding.playerContainer.visibility = View.GONE
-        binding.sectionLabels.visibility = View.VISIBLE
+        binding.prepareHeader.text = editingPreparedName?.let { "Prepare: $it" } ?: "Prepare game"
+        binding.prepareHeader.visibility = View.VISIBLE
         binding.listsContainer.visibility = View.VISIBLE
+        // Prepare mode edits one playlist — hide the (empty) player column so the
+        // playlist spans full width. player_list/divider are restored for the in-game roster.
+        binding.playerList.visibility = View.GONE
+        binding.listsDivider.visibility = View.GONE
+        binding.videoPlaylist.visibility = View.VISIBLE
+        binding.joinPanel.visibility = View.GONE              // no JOIN while preparing
         binding.buttonBar.visibility = View.VISIBLE
-        binding.gmToolsRow.visibility = View.VISIBLE          // + Video (Screen/Torch inert pre-session)
-        binding.savedPlaylistsRow.visibility = View.VISIBLE   // Save/Load named playlists
-        binding.prepareRow.visibility = View.VISIBLE          // password + Save + Done
-        binding.sessionControlsRow.visibility = View.GONE     // hide JOIN
+        binding.gmToolsRow.visibility = View.VISIBLE          // + Video
+        binding.prepareRow.visibility = View.VISIBLE          // password + Save game + Done
         binding.connectivityIndicator.visibility = View.GONE
         binding.invisibleResumeButton.visibility = View.GONE
         // Hotspots off in prepare mode so a corner tap can't re-trigger create/prepare.
@@ -553,8 +505,13 @@ class MainActivity : AppCompatActivity() {
 
         // Hide lobby UI, show full-screen player
         binding.playerContainer.visibility = View.VISIBLE
-        binding.sectionLabels.visibility = View.GONE
+        binding.prepareHeader.visibility = View.GONE
+        binding.joinPanel.visibility = View.GONE
         binding.listsContainer.visibility = View.GONE
+        // Restore the player column so the GM's in-game roster toggle (gm_playlist_button)
+        // shows both players and playlist — prepare mode hides player_list.
+        binding.playerList.visibility = View.VISIBLE
+        binding.listsDivider.visibility = View.VISIBLE
         binding.buttonBar.visibility = View.GONE
         binding.connectivityIndicator.visibility = View.GONE
         binding.playerView.useController = false

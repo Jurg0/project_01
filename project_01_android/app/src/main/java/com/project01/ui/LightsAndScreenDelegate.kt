@@ -42,41 +42,35 @@ class LightsAndScreenDelegate(
         updateGmLightButton()
     }
 
-    /** Restore lobby defaults: screen on at system brightness, torch off, labels reset. */
+    /** Restore lobby defaults: screen on at system brightness, torch off. */
     fun resetToLobbyDefaults() {
         isScreenOff = false
         isTorchOn = false
         binding.blackOverlay.visibility = View.GONE
-        binding.turnOffScreenButton.text = "Screen"
-        binding.deactivateTorchButton.text = "Torch"
         updateGmLightButton()
         setScreenBrightness(-1f)
-        setTorchMode(false) // ensure the physical flashlight is off, not just the flag/labels
+        setTorchMode(false) // ensure the physical flashlight is off, not just the flag
     }
 
     private fun applyScreenOff() {
         isScreenOff = true
         binding.blackOverlay.visibility = View.VISIBLE
         setScreenBrightness(0f)
-        binding.turnOffScreenButton.text = "Screen On"
     }
 
     private fun applyScreenOn() {
         isScreenOff = false
         binding.blackOverlay.visibility = View.GONE
         setScreenBrightness(-1f)
-        binding.turnOffScreenButton.text = "Screen"
     }
 
     private fun applyTorchOff() {
         isTorchOn = false
-        binding.deactivateTorchButton.text = "Torch"
         setTorchMode(false)
     }
 
     private fun applyTorchOn() {
         isTorchOn = true
-        binding.deactivateTorchButton.text = "Torch Off"
         setTorchMode(true)
     }
 

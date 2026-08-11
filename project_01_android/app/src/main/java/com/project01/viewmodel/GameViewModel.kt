@@ -391,6 +391,18 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         repository.restoreVideos(emptyList())
     }
 
+    /**
+     * True if the in-editor state (the given [password] plus the current playlist) differs
+     * from the stored prepared game [name] — i.e. there are unsaved changes. A brand-new
+     * game with no password and no videos is considered "nothing to save" (returns false).
+     */
+    fun preparedGameHasUnsavedChanges(name: String, password: String): Boolean {
+        val saved = repository.preparedGameStore.load(name)
+        val currentVideos: List<VideoDto> = (videos.value ?: emptyList()).map { it.toDto() }
+        val savedVideos: List<VideoDto> = saved?.videos ?: emptyList()
+        return password != (saved?.password ?: "") || currentVideos != savedVideos
+    }
+
     fun setPrepareMode(on: Boolean) { _prepareMode.value = on }
 
     fun addVideo(uri: Uri) {

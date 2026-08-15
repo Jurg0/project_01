@@ -63,7 +63,6 @@ class FileTransferOrchestrator(
      */
     fun resolveAndRequestMissing(
         videos: List<Video>,
-        thisAddress: String?,
         senderAddress: String,
     ): List<Video> {
         return videos.map { video ->
@@ -72,17 +71,21 @@ class FileTransferOrchestrator(
                 received.add(video.title)
                 Video(Uri.fromFile(localFile), video.title)
             } else {
-                if (thisAddress != null) {
-                    requestFileTransfer(video.title, thisAddress, senderAddress)
-                }
+                requestFileTransfer(video.title, senderAddress)
                 video
             }
         }
     }
 
+    /**
+     * Ask the game master for one file. We don't send our own address: the GM connects back
+     * using the source IP of this request's TCP socket ([handleFileTransferRequest]'s
+     * `fromIp`), so `FileTransferRequest.targetAddress` is never read. It used to carry the
+     * Wi-Fi Direct MAC, and requesting was gated on that value being non-null — which would
+     * have silently disabled every transfer once Wi-Fi Direct was removed.
+     */
     private fun requestFileTransfer(
         fileName: String,
-        targetAddress: String,
         senderAddress: String,
     ) {
         scope.launch {
@@ -95,7 +98,7 @@ class FileTransferOrchestrator(
                 fileTransfer.startReceivingWithRetry(port, outputFile)
             }
             gameSync.broadcast(
-                FileTransferRequest(fileName, port, senderAddress, targetAddress)
+                FileTransferRequest(fileName, port, senderAddress, targetAddress = "")
             )
         }
     }

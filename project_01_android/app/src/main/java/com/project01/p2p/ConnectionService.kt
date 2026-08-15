@@ -21,7 +21,7 @@ class ConnectionService : Service() {
 
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Game session active")
-            .setContentText("Maintaining Wi-Fi Direct connection")
+            .setContentText("Maintaining game connection")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
@@ -53,7 +53,7 @@ class ConnectionService : Service() {
                 "Game Connection",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Keeps the Wi-Fi Direct game connection alive"
+                description = "Keeps the game connection alive"
             }
             val notificationManager = getSystemService(NotificationManager::class.java)
             notificationManager.createNotificationChannel(channel)

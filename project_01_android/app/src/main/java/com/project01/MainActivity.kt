@@ -28,7 +28,6 @@ import com.project01.session.SnapshotManager
 import com.project01.ui.ConnectionStatus
 import com.project01.ui.GmControlsDelegate
 import com.project01.ui.LightsAndScreenDelegate
-import com.project01.ui.PermissionHelper
 import com.project01.ui.PlaybackViewDelegate
 import com.project01.ui.StartScreenControlsDelegate
 import com.project01.ui.UiError
@@ -58,12 +57,6 @@ class MainActivity : AppCompatActivity() {
     private val enableBluetoothLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         // Bluetooth enable result handled — no action needed
     }
-
-    private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
-        permissions.onPermissionsResult(results)
-    }
-
-    private val permissions: PermissionHelper = PermissionHelper(this) { perms -> permissionLauncher.launch(perms) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -121,13 +114,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupClickListeners() {
-        // JOIN: password-only prompt → auto-discover + connect to the single host.
+        // JOIN: password-only prompt → dial the host on the hotspot we're already joined to.
+        // No runtime permission needed: we don't scan, we just open a TCP socket.
         binding.joinGameButton.setOnClickListener {
-            permissions.requirePermissions(permissions.wifiP2pPermissions()) {
-                PasswordPromptDialogFragment { password ->
-                    gameViewModel.join(password)
-                }.show(supportFragmentManager, "JoinDialog")
-            }
+            PasswordPromptDialogFragment { password ->
+                gameViewModel.join(password)
+            }.show(supportFragmentManager, "JoinDialog")
         }
 
         binding.addVideoButton.setOnClickListener {
@@ -149,11 +141,9 @@ class MainActivity : AppCompatActivity() {
     /** CREATE (double-tap top-right): password prompt identical to JOIN, then start
      *  the game matching that password. See GameViewModel.createGameForPassword. */
     private fun onCreateRequested() {
-        permissions.requirePermissions(permissions.wifiP2pPermissions()) {
-            PasswordPromptDialogFragment { password ->
-                gameViewModel.createGameForPassword(password)
-            }.show(supportFragmentManager, "CreateDialog")
-        }
+        PasswordPromptDialogFragment { password ->
+            gameViewModel.createGameForPassword(password)
+        }.show(supportFragmentManager, "CreateDialog")
     }
 
     /** PREPARE (long-press top-left): manage prepared (playlist + password) pairs. */
@@ -308,10 +298,6 @@ class MainActivity : AppCompatActivity() {
 
         gameViewModel.toastMessage.observe(this, Observer { message ->
             Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
-        })
-
-        gameViewModel.thisDevice.observe(this, Observer { _ ->
-            // Do something with the device info if needed
         })
 
         gameViewModel.passwordVerified.observe(this, Observer { isVerified ->
@@ -545,12 +531,10 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         playbackView.onResume()
-        registerReceiver(gameViewModel.repository.broadcastReceiver, gameViewModel.repository.intentFilter)
     }
 
     override fun onPause() {
         super.onPause()
         playbackView.onPause()
-        unregisterReceiver(gameViewModel.repository.broadcastReceiver)
     }
 }

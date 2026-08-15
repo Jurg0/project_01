@@ -168,7 +168,7 @@ class FileTransferOrchestratorTest {
             Video(Uri.parse("content://gm/cached.mp4"), "cached.mp4"),
         )
 
-        val resolved = orchestrator.resolveAndRequestMissing(incoming, thisAddress = "peer", senderAddress = "gm")
+        val resolved = orchestrator.resolveAndRequestMissing(incoming, senderAddress = "gm")
         advanceUntilIdle()
 
         assertEquals(1, resolved.size)
@@ -183,7 +183,7 @@ class FileTransferOrchestratorTest {
         val orchestrator = newOrchestrator()
         val incoming = listOf(Video(Uri.parse("content://gm/new.mp4"), "new.mp4"))
 
-        val resolved = orchestrator.resolveAndRequestMissing(incoming, thisAddress = "peer", senderAddress = "gm")
+        val resolved = orchestrator.resolveAndRequestMissing(incoming, senderAddress = "gm")
         advanceUntilIdle()
 
         // Returned list preserves the original (content://) URI for missing files.
@@ -196,21 +196,24 @@ class FileTransferOrchestratorTest {
         assertEquals("new.mp4", request.fileName)
         assertEquals(9999, request.port)
         assertEquals("gm", request.senderAddress)
-        assertEquals("peer", request.targetAddress)
         verify(fileTransfer).startReceivingWithRetry(eq(9999), any(), any())
     }
 
     @Test
-    fun `resolveAndRequestMissing skips request when thisAddress is null`() = runTest(dispatcher) {
+    fun `resolveAndRequestMissing always requests, regardless of our own address`() = runTest(dispatcher) {
+        // Regression: the request used to be gated on this device's Wi-Fi Direct address
+        // being known. With Wi-Fi Direct removed that value was always null, which would
+        // have silently stopped every video from ever transferring. The GM replies to the
+        // source IP of this request's socket, so our own address is not needed.
         isGameMaster = false
         val orchestrator = newOrchestrator()
         val incoming = listOf(Video(Uri.parse("content://gm/new.mp4"), "new.mp4"))
 
-        orchestrator.resolveAndRequestMissing(incoming, thisAddress = null, senderAddress = "gm")
+        orchestrator.resolveAndRequestMissing(incoming, senderAddress = "gm")
         advanceUntilIdle()
 
-        assertTrue("No broadcast when own address is unknown", captureBroadcasts.isEmpty())
-        verify(fileTransfer, never()).startReceivingWithRetry(any(), any(), any())
+        assertEquals(1, captureBroadcasts.size)
+        verify(fileTransfer).startReceivingWithRetry(eq(9999), any(), any())
     }
 
     @Test

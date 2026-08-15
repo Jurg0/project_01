@@ -1,9 +1,5 @@
 package com.project01.session
 
-import android.net.wifi.p2p.WifiP2pConfig
-import android.net.wifi.p2p.WifiP2pDevice
-import android.net.wifi.p2p.WifiP2pInfo
-import android.net.wifi.p2p.WifiP2pManager
 import androidx.arch.core.executor.testing.InstantTaskExecutorRule
 import com.project01.ui.ConnectionStatus
 import com.project01.ui.UiError
@@ -39,8 +35,6 @@ class SessionControllerTest {
     private lateinit var network: TestNetworkManager
     private lateinit var gameSync: GameSync
     private lateinit var playbackController: PlaybackController
-    private lateinit var wifiManager: WifiP2pManager
-    private lateinit var channel: WifiP2pManager.Channel
     private val broadcasts = mutableListOf<GameMessage>()
     private val sentTo = mutableListOf<Pair<String, GameMessage>>()
     private val uiErrors = mutableListOf<UiError>()
@@ -49,8 +43,9 @@ class SessionControllerTest {
     private val authenticated = mutableListOf<String>()
     private val disconnected = mutableListOf<String>()
     private var currentVideos: List<Video> = emptyList()
-    private var thisDevice: WifiP2pDevice? = null
     private var wifiEnabled = true
+    /** What resolveHostAddress() returns — the GM's IP (the hotspot gateway), or null. */
+    private var hostAddress: String? = "192.168.43.1"
 
     private val dispatcher = UnconfinedTestDispatcher()
     private val scope = TestScope(dispatcher)
@@ -59,13 +54,11 @@ class SessionControllerTest {
         return SessionController(
             gameSync = gameSync,
             playbackController = playbackController,
-            wifiP2pManager = wifiManager,
-            channel = channel,
             scope = scope,
-            thisDeviceProvider = { thisDevice },
             videosProvider = { currentVideos },
             isWifiEnabled = { wifiEnabled },
             openWifiSettings = { },
+            resolveHostAddress = { hostAddress },
             postUiError = { uiErrors.add(it) },
             onSessionStarted = { sessionStarts.add(it) },
             onSessionEnded = { sessionEnds.add(it) },
@@ -81,8 +74,8 @@ class SessionControllerTest {
         sessionStarts.clear()
         sessionEnds.clear()
         currentVideos = emptyList()
-        thisDevice = WifiP2pDevice().apply { deviceName = "TestDevice" }
         wifiEnabled = true
+        hostAddress = "192.168.43.1"
         authenticated.clear()
         disconnected.clear()
         network = TestNetworkManager().apply {
@@ -96,63 +89,12 @@ class SessionControllerTest {
             scope = scope,
             isGameMaster = { false },
         )
-        wifiManager = mock()
-        channel = mock()
-    }
-
-    @Test
-    fun `handleConnectionInfo as group owner sets HOST state and starts session as host`() {
-        val controller = newController()
-        var connectionState: ConnectionStatus? = null
-        controller.connectionState.observeForever { connectionState = it }
-
-        controller.handleConnectionInfo(WifiP2pInfo().apply {
-            groupFormed = true
-            isGroupOwner = true
-        })
-
-        assertEquals(ConnectionStatus.HOST, connectionState)
-        assertEquals(listOf(true), sessionStarts)
-        assertTrue(controller.isGameMaster())
-    }
-
-    @Test
-    fun `handleConnectionInfo as client sets CONNECTED but does NOT start session (password gate)`() {
-        val controller = newController()
-        var connectionState: ConnectionStatus? = null
-        controller.connectionState.observeForever { connectionState = it }
-
-        controller.handleConnectionInfo(WifiP2pInfo().apply {
-            groupFormed = true
-            isGroupOwner = false
-            groupOwnerAddress = InetAddress.getByName("192.168.49.1")
-        })
-
-        assertEquals(ConnectionStatus.CONNECTED, connectionState)
-        // Group formation is "connecting/authenticating", not "started" — the client
-        // session starts only on PasswordResponseMessage(success).
-        assertTrue(sessionStarts.isEmpty())
-        assertFalse(controller.isGameMaster())
-    }
-
-    @Test
-    fun `handleConnectionInfo ignored when group not formed`() {
-        val controller = newController()
-
-        controller.handleConnectionInfo(WifiP2pInfo().apply { groupFormed = false })
-
-        assertTrue(sessionStarts.isEmpty())
-        assertFalse(controller.isGameMaster())
     }
 
     @Test
     fun `handleClientConnected on player stops reconnect and sets CONNECTED`() {
         val controller = newController()
-        controller.handleConnectionInfo(WifiP2pInfo().apply {
-            groupFormed = true
-            isGroupOwner = false
-            groupOwnerAddress = InetAddress.getByName("192.168.49.1")
-        })
+        controller.connectToHost()
         var connectionState: ConnectionStatus? = null
         controller.connectionState.observeForever { connectionState = it }
 
@@ -164,12 +106,9 @@ class SessionControllerTest {
     @Test
     fun `handleClientConnected on game master is no-op for connection state`() {
         val controller = newController()
-        controller.handleConnectionInfo(WifiP2pInfo().apply {
-            groupFormed = true
-            isGroupOwner = true
-        })
-        // After handleConnectionInfo, state is HOST. handleClientConnected arms an auth
-        // timeout for the client but does not change connection state → still HOST.
+        controller.createGame("secret")
+        // createGame posts HOST. handleClientConnected arms an auth timeout for the
+        // client but does not change connection state → still HOST.
         controller.handleClientConnected("peer")
 
         var connectionState: ConnectionStatus? = null
@@ -180,11 +119,7 @@ class SessionControllerTest {
     @Test
     fun `handleClientDisconnected on player triggers reconnect when host known`() {
         val controller = newController()
-        controller.handleConnectionInfo(WifiP2pInfo().apply {
-            groupFormed = true
-            isGroupOwner = false
-            groupOwnerAddress = InetAddress.getByName("192.168.49.1")
-        })
+        controller.connectToHost()
 
         val shouldHandle = controller.handleClientDisconnected("192.168.49.1")
 
@@ -196,10 +131,7 @@ class SessionControllerTest {
     @Test
     fun `handleClientDisconnected on game master returns true so caller handles roster`() {
         val controller = newController()
-        controller.handleConnectionInfo(WifiP2pInfo().apply {
-            groupFormed = true
-            isGroupOwner = true
-        })
+        controller.createGame("secret")
 
         val shouldHandle = controller.handleClientDisconnected("peer")
 
@@ -209,11 +141,7 @@ class SessionControllerTest {
     @Test
     fun `handleClientDisconnected ignored when ending game`() {
         val controller = newController()
-        controller.handleConnectionInfo(WifiP2pInfo().apply {
-            groupFormed = true
-            isGroupOwner = false
-            groupOwnerAddress = InetAddress.getByName("192.168.49.1")
-        })
+        controller.connectToHost()
         controller.handleEndGame()
 
         val shouldHandle = controller.handleClientDisconnected("192.168.49.1")
@@ -261,10 +189,6 @@ class SessionControllerTest {
     fun `handlePasswordMessage on game master verifies correct hash and sends success`() = runTest(dispatcher) {
         val controller = newController()
         controller.createGame("secret")  // Sets gamePassword internally
-        controller.handleConnectionInfo(WifiP2pInfo().apply {
-            groupFormed = true
-            isGroupOwner = true
-        })
         network.onConsumeNonce = { addr -> if (addr == "peer") "n0nce" else null }
 
         val correctHash = PasswordHasher.hash("secret", "n0nce")
@@ -283,10 +207,6 @@ class SessionControllerTest {
     fun `handlePasswordMessage on game master rejects incorrect hash`() = runTest(dispatcher) {
         val controller = newController()
         controller.createGame("secret")
-        controller.handleConnectionInfo(WifiP2pInfo().apply {
-            groupFormed = true
-            isGroupOwner = true
-        })
         network.onConsumeNonce = { _ -> "n0nce" }
 
         controller.handlePasswordMessage(PasswordMessage("wrong-hash"), senderAddress = "peer")
@@ -304,10 +224,6 @@ class SessionControllerTest {
     fun `handlePasswordMessage with missing nonce rejects`() = runTest(dispatcher) {
         val controller = newController()
         controller.createGame("secret")
-        controller.handleConnectionInfo(WifiP2pInfo().apply {
-            groupFormed = true
-            isGroupOwner = true
-        })
         network.onConsumeNonce = { _ -> null }
 
         controller.handlePasswordMessage(PasswordMessage("any-hash"), senderAddress = "peer")
@@ -323,10 +239,6 @@ class SessionControllerTest {
     fun `successful handlePasswordMessage pushes initial playlist and playback intent to joiner`() = runTest(dispatcher) {
         val controller = newController()
         controller.createGame("secret")
-        controller.handleConnectionInfo(WifiP2pInfo().apply {
-            groupFormed = true
-            isGroupOwner = true
-        })
         currentVideos = listOf(Video(android.net.Uri.parse("content://v1"), "v1"))
         playbackController.play(0, 1000L)
         network.onConsumeNonce = { _ -> "n0nce" }
@@ -377,7 +289,6 @@ class SessionControllerTest {
         // Wrong password → tear down cleanly and return to the start screen.
         assertTrue(sessionStarts.isEmpty())
         assertEquals(ConnectionStatus.DISCONNECTED, controller.connectionState.value)
-        verify(wifiManager).removeGroup(any(), anyOrNull())
     }
 
     @Test
@@ -394,10 +305,7 @@ class SessionControllerTest {
     @Test
     fun `endGame clears a stale password rejection so it cannot re-toast`() = runTest(dispatcher) {
         val controller = newController()
-        controller.handleConnectionInfo(WifiP2pInfo().apply {
-            groupFormed = true
-            isGroupOwner = true
-        })
+        controller.createGame("secret")
         controller.handlePasswordResponseMessage(PasswordResponseMessage(false))
         assertEquals(false, controller.passwordVerified.value)
 
@@ -410,11 +318,7 @@ class SessionControllerTest {
     @Test
     fun `handleEndGame sets DISCONNECTED state and emits Informational error`() {
         val controller = newController()
-        controller.handleConnectionInfo(WifiP2pInfo().apply {
-            groupFormed = true
-            isGroupOwner = false
-            groupOwnerAddress = InetAddress.getByName("192.168.49.1")
-        })
+        controller.connectToHost()
 
         controller.handleEndGame()
 
@@ -427,10 +331,7 @@ class SessionControllerTest {
     @Test
     fun `endGame broadcasts EndGameMessage and ends session locally`() = runTest(dispatcher) {
         val controller = newController()
-        controller.handleConnectionInfo(WifiP2pInfo().apply {
-            groupFormed = true
-            isGroupOwner = true
-        })
+        controller.createGame("secret")
 
         controller.endGame()
         advanceUntilIdle()
@@ -438,28 +339,6 @@ class SessionControllerTest {
         assertTrue(broadcasts.any { it is EndGameMessage })
         assertEquals(ConnectionStatus.DISCONNECTED, controller.connectionState.value)
         assertEquals(listOf(false), sessionEnds)
-        verify(wifiManager).removeGroup(any(), anyOrNull())
-    }
-
-    @Test
-    fun `createGame with wifi off skips group creation and emits recoverable error`() {
-        wifiEnabled = false
-        val controller = newController()
-
-        controller.createGame("secret")
-
-        assertEquals(ConnectionStatus.DISCONNECTED, controller.connectionState.value)
-        assertTrue(uiErrors.any { it is UiError.Recoverable && it.message.contains("Wi-Fi is off") })
-    }
-
-    @Test
-    fun `createGame initiates createGroup when wifi enabled`() {
-        val controller = newController()
-
-        controller.createGame("secret")
-
-        assertEquals(ConnectionStatus.CONNECTING, controller.connectionState.value)
-        verify(wifiManager).createGroup(any(), any())
     }
 
     @Test
@@ -473,40 +352,85 @@ class SessionControllerTest {
     }
 
     @Test
-    fun `connectToPlayer with wifi off emits Wi-Fi-off error`() {
-        wifiEnabled = false
-        val controller = newController()
-        val peer = Player(WifiP2pDevice().apply { deviceAddress = "AA:BB" }, "AA:BB", false)
-
-        controller.connectToPlayer(peer)
-
-        assertTrue(uiErrors.any { it is UiError.Recoverable && it.message.contains("Wi-Fi is off") })
-    }
-
-    @Test
-    fun `connectToPlayer connects as client with groupOwnerIntent 0`() {
-        val controller = newController()
-        val peer = Player(WifiP2pDevice().apply { deviceAddress = "AA:BB" }, "AA:BB", false)
-        // No stale group to remove: fire the removeGroup callback so connect proceeds.
-        whenever(wifiManager.removeGroup(any(), any())).thenAnswer {
-            (it.arguments[1] as WifiP2pManager.ActionListener).onFailure(0)
-            null
-        }
-        val configCaptor = argumentCaptor<WifiP2pConfig>()
-
-        controller.connectToPlayer(peer)
-
-        // Stale group is cleared before connecting so groupOwnerIntent is honored.
-        verify(wifiManager).removeGroup(any(), any())
-        verify(wifiManager).connect(any(), configCaptor.capture(), any())
-        // A joiner must never win group ownership, else it inherits the GM role.
-        assertEquals(0, configCaptor.firstValue.groupOwnerIntent)
-        assertEquals("AA:BB", configCaptor.firstValue.deviceAddress)
-    }
-
-    @Test
     fun `passwordVerified starts unset`() {
         val controller = newController()
         assertNull(controller.passwordVerified.value)
+    }
+
+    // --- Hotspot LAN model (replaced Wi-Fi Direct) ---
+
+    @Test
+    fun `createGame claims the host role and starts the server without needing Wi-Fi on`() {
+        // Hosting a mobile hotspot turns the station Wi-Fi radio off, so the game master
+        // must be able to start a game with isWifiEnabled() == false.
+        wifiEnabled = false
+        var started = false
+        network.onStartServer = { started = true }
+        val controller = newController()
+
+        controller.createGame("secret")
+
+        assertTrue("role must be set unconditionally", controller.isGameMaster())
+        assertTrue("TCP server must be started", started)
+        assertEquals(ConnectionStatus.HOST, controller.connectionState.value)
+        assertEquals(listOf(true), sessionStarts)
+        assertTrue(uiErrors.isEmpty())
+    }
+
+    @Test
+    fun `connectToHost dials the resolved gateway and does not start the session yet`() {
+        hostAddress = "192.168.43.1"
+        var dialed: Pair<String, Int>? = null
+        network.onConnectTo = { host, port -> dialed = host to port }
+        val controller = newController()
+
+        controller.connectToHost()
+
+        assertEquals("192.168.43.1", dialed?.first)
+        assertEquals(gameSync.port, dialed?.second)
+        assertEquals(ConnectionStatus.CONNECTING, controller.connectionState.value)
+        // The password hard gate still owns session start.
+        assertTrue(sessionStarts.isEmpty())
+        assertFalse(controller.isGameMaster())
+    }
+
+    @Test
+    fun `connectToHost with no resolvable host emits a recoverable error and does not dial`() {
+        hostAddress = null
+        var dialed = false
+        network.onConnectTo = { _, _ -> dialed = true }
+        val controller = newController()
+
+        controller.connectToHost()
+
+        assertFalse("must not dial when the host is unknown", dialed)
+        assertEquals(ConnectionStatus.DISCONNECTED, controller.connectionState.value)
+        assertTrue(uiErrors.any { it is UiError.Recoverable })
+    }
+
+    @Test
+    fun `connectToHost with Wi-Fi off emits a recoverable error and does not dial`() {
+        wifiEnabled = false
+        var dialed = false
+        network.onConnectTo = { _, _ -> dialed = true }
+        val controller = newController()
+
+        controller.connectToHost()
+
+        assertFalse(dialed)
+        assertEquals(ConnectionStatus.DISCONNECTED, controller.connectionState.value)
+        assertTrue(uiErrors.any { it is UiError.Recoverable })
+    }
+
+    @Test
+    fun `password success starts the client session after connectToHost`() = runTest(dispatcher) {
+        val controller = newController()
+        controller.joinGame("Alice", "secret")
+        controller.connectToHost()
+
+        controller.handlePasswordResponseMessage(PasswordResponseMessage(true))
+        advanceUntilIdle()
+
+        assertEquals(listOf(false), sessionStarts)
     }
 }

@@ -2,9 +2,24 @@
 [![License: GPL v3](https://img.shields.io/badge/License-GPL_v3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Latest Release](https://img.shields.io/github/v/release/Jurg0/project_01?color=blue&label=version)](https://github.com/Jurg0/project_01/releases)
 
-# Project 01 — Wi-Fi Direct Multiplayer Game
+# Project 01 — Local-Network Multiplayer Game
 
-Android multiplayer game app where up to 20 smartphones connect via Wi-Fi Direct. One or more devices act as hidden "game masters" controlling video playback, screen state, and torch on all connected player devices. Players walk through a woods-based narrative experience. Game masters remain undercover — their UI is identical to players but with invisible controls.
+Android multiplayer game app where up to 20 smartphones share one Wi-Fi network — a mobile hotspot hosted by the game master's phone. One device acts as a hidden "game master" controlling video playback, screen state, and torch on all connected player devices. Players walk through a woods-based narrative experience. Game masters remain undercover — their UI is identical to players but with invisible controls.
+
+## Network setup (do this first)
+
+All devices talk over one ordinary Wi-Fi LAN. The game master's phone is the access point, so the app finds the host as the network's gateway — there is no device discovery to go wrong.
+
+1. On the **game master's phone**, turn on **Mobile Hotspot** (Settings → Mobile Hotspot). Any network name and password will do — the app doesn't need to know them.
+   - Prefer the **2.4 GHz** band: older phones can't always see a 5 GHz hotspot.
+   - If the phone has an "automatically turn off hotspot when no devices are connected" option, **switch it off** — the game often starts long after the phones connect.
+   - Mobile data can stay off; the game needs no internet.
+2. Connect **every player phone** to that hotspot, **before** the game starts (while handing out the phones).
+3. Only then use the in-app CREATE / JOIN controls below.
+
+If a player taps JOIN while not on the hotspot, the app says so immediately rather than hanging.
+
+> **Note on group size:** phone hotspots typically accept only ~8–10 simultaneous devices, which is fewer than the 20-player target. Check your host phone's limit before running a large session.
 
 ## Game Master controls (undercover)
 
@@ -14,12 +29,12 @@ The start screen shows **only a visible JOIN button**. Everything the game maste
 |--------|-------|---------|--------------|
 | **Prepare a game** | **Top-left** corner (start screen) | **Long-press** | Opens the prepared-games manager to create/edit/delete a game — its playlist **and** password. Do this ahead of time (e.g. the day before). |
 | **Create / start a game** | **Top-right** corner (start screen) | **Double-tap** | Prompts for a password (dialog looks identical to JOIN). It matches the password to a prepared game, loads that playlist, and starts immediately — the screen goes to the blue safe-screen. |
-| **Join** (players) | The visible **JOIN** button | Tap | Enter the password (discovered out-of-app); the app auto-finds the host and connects. |
+| **Join** (players) | The visible **JOIN** button | Tap | Enter the password (discovered out-of-app); the app connects to the host on the shared hotspot. |
 | **Show/hide GM overlay** | **Centre** of the screen (during a game) | **Double-tap** | Reveals the minimal Prev / Play-Next / Light controls. |
 | **End the game** | **Centre** of the screen (during a game) | **Long-press** | Confirms, then ends the session for everyone. |
 
 Notes:
-- **Prepare vs. Create:** *Prepare* only saves a (playlist + password) pair — it does **not** start anything or form a Wi-Fi Direct group. *Create* is what actually starts the game on-site, using the prepared password to pick the right playlist.
+- **Prepare vs. Create:** *Prepare* only saves a (playlist + password) pair — it does **not** start a session. *Create* is what actually starts the game on-site, using the prepared password to pick the right playlist.
 - If the entered password matches no prepared game, Create still starts a game (with the last-used/empty playlist) so an onlooker can't tell a wrong password from a right one; the GM simply notices the expected video doesn't play.
 - The corner hotspots are live **only on the start screen** — they're disabled during a game and in prepare mode, so a stray corner tap can't fire them mid-session.
 - A paired Bluetooth presenter also drives a game master: page back/forward = Prev/Next, and the "Mark" button toggles the light.
@@ -82,9 +97,9 @@ Single-activity MVVM architecture written entirely in Kotlin.
 ```
 MainActivity (View)
     ↓
-GameViewModel (ViewModel — UI logic, P2P, Bluetooth, video management)
+GameViewModel (ViewModel — UI logic, session, Bluetooth, video management)
     ↓
-GameRepository (Repository — Android system services, Wi-Fi P2P)
+GameRepository (Repository — Android system services, host-address resolution)
     ↓
 GameSync (Facade over NetworkManager)
     ↓
@@ -94,17 +109,22 @@ FileTransfer (Binary file transfer, separate TCP connection)
 
 ### Networking
 
-Three layers handle connectivity:
+Every device shares one ordinary Wi-Fi LAN — the mobile hotspot hosted by the game master's phone (see [Network setup](#network-setup-do-this-first)). Three layers handle connectivity:
 
-1. **Wi-Fi Direct (P2P layer):** Device discovery and group formation via Android's `WifiP2pManager` API. `ConnectionService` runs as a foreground service to maintain the Wi-Fi Direct connection through screen-off and doze mode.
+1. **Reaching the host:** because the game master's phone is the access point, it is the network's gateway. `GameRepository.resolveHostAddress()` reads that gateway address (`dhcpServerAddress` on API 30+, else the default route, else the legacy `DhcpInfo`), so there is no device-discovery protocol to fail. `ConnectionService` runs as a foreground service holding a wake lock and a Wi-Fi lock so the connection survives screen-off and doze.
 
-2. **Game state sync (Session layer):** `SocketNetworkManager` implements TCP socket communication on port 8888. Uses a 4-byte length-prefixed JSON wire format via `kotlinx.serialization`. All message types implement the `GameMessage` sealed interface for compile-time type safety.
+2. **Game state sync (Session layer):** `SocketNetworkManager` implements TCP socket communication on port 8888, listening on all interfaces. Uses a 4-byte length-prefixed JSON wire format via `kotlinx.serialization`. All message types implement the `GameMessage` sealed interface for compile-time type safety.
 
 3. **File transfer:** `FileTransfer` uses a separate `ServerSocket` for binary video transfers with a 64KB buffer. Files are sent with an 8-byte size header and 32-byte SHA-256 checksum for integrity validation. Failed transfers retry automatically with exponential backoff (up to 3 attempts). Emits progress/success/failure events via Kotlin `Flow`.
 
+> Earlier versions used Wi-Fi Direct. It was removed because a game master's autonomous
+> group owner proved undiscoverable to older phones — service discovery reported success on
+> every call yet never returned a single response (reproduced repeatedly with a Samsung A20e
+> joining a Samsung S23).
+
 ### Key Data Flow
 
-- Game master creates a game and starts a TCP server; other devices connect via Wi-Fi Direct
+- Game master creates a game and starts a TCP server; players dial it over the shared hotspot
 - Players authenticate via challenge-response: server sends a nonce, client replies with SHA-256(password + nonce)
 - Game master broadcasts: `PlaybackCommand` (play/pause, next, previous), `PlaybackState` (position sync), `AdvancedCommand` (screen off, torch off), and video playlists
 - Videos are transferred to player devices' local storage so playback works on intermittent connections

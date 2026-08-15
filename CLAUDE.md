@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Android multiplayer game app where up to 20 smartphones connect via Wi-Fi Direct. One or more devices act as hidden "game masters" controlling video playback, screen state, and torch on all connected player devices. Players walk through a woods-based narrative experience. Game masters must remain undercover — their UI is identical to players but with invisible controls.
+Android multiplayer game app where up to 20 smartphones share one ordinary Wi-Fi LAN — a mobile hotspot hosted by the game master's phone (the GM enables it manually; Android forbids apps from enabling tethering). One device acts as a hidden "game master" controlling video playback, screen state, and torch on all connected player devices. Players walk through a woods-based narrative experience. Game masters must remain undercover — their UI is identical to players but with invisible controls.
 
 ## Build & Test Commands
 
@@ -30,7 +30,6 @@ Single-activity MVVM architecture written entirely in Kotlin. `MainActivity` and
 
 ```
 MainActivity (View — coordinator)
-   ├── PermissionHelper          (ui/) runtime-permission gating
    ├── LightsAndScreenDelegate   (ui/) torch + screen brightness + black overlay
    ├── PlaybackViewDelegate      (ui/) ExoPlayer lifecycle + intent reconciliation
    └── GmControlsDelegate        (ui/) GM overlay + gestures + HID key mapping
@@ -40,7 +39,7 @@ GameViewModel (ViewModel — LiveData facade + roster + snapshot/playlist glue)
    ├── FileTransferOrchestrator  (session/) file-transfer workflow + received-files set
    └── SessionController         (session/) game lifecycle + password handshake + role bit
        ↓
-GameRepository (Repository — Android system services, Wi-Fi P2P, broadcast receiver)
+GameRepository (Repository — Android system services, host-address resolution)
        ↓
 GameSync (Facade over NetworkManager) + FileTransfer (separate ServerSocket)
        ↓
@@ -51,7 +50,9 @@ SocketNetworkManager (TCP sockets, implements NetworkManager interface)
 
 Three layers handle connectivity:
 
-1. **Wi-Fi Direct (P2P layer):** `p2p/ConnectionService.kt` and `p2p/WifiDirectBroadcastReceiver.kt` manage device discovery and P2P connections using Android's WifiP2pManager API. ConnectionService is a foreground service with a wake lock and Wi-Fi lock to maintain the connection through screen-off and doze mode.
+1. **Reaching the host (no discovery protocol):** all devices are already joined to the GM's hotspot *before* the game starts, so the GM is the network gateway. `GameRepository.resolveHostAddress()` returns it, trying `LinkProperties.dhcpServerAddress` (API 30+) → default-route gateway → legacy `WifiManager.dhcpInfo.gateway` (minSdk is 24, so the fallbacks are load-bearing for older phones), logging which source won under tag `GameNet`. Pure helpers live in `session/HostAddressResolver.kt`. `p2p/ConnectionService.kt` is a foreground service with a wake lock and Wi-Fi lock to hold the connection through screen-off and doze.
+
+   **Wi-Fi Direct was removed** (it previously did discovery + group formation via `WifiP2pManager`). A GM's *autonomous group owner* proved undiscoverable to older phones: on a Samsung A20e (Android 11) joining a Samsung S23, `addServiceRequest`/`discoverPeers`/`discoverServices` all returned success on every cycle for 60 s while yielding zero DNS-SD responses and zero peers. Forcing the group to 2.4 GHz changed nothing. Do not reintroduce Wi-Fi Direct discovery. `WifiP2pDevice` survives only as a Parcelable data holder inside `Player`.
 
 2. **Game state sync (Session layer):** `GameSync` wraps `NetworkManager` (interface) with `SocketNetworkManager` as the TCP socket implementation. Server listens on port 8888. Uses kotlinx.serialization JSON with a 4-byte length-prefixed wire format (`MessageEnvelope` for encode/decode). All network messages implement the `GameMessage` sealed interface. `MessageEnvelope.PROTOCOL_VERSION` is sent in the `PasswordChallenge` handshake to detect version mismatches between devices. Broadcasts messages to all connected clients via a `clients: Map<String, OutputStream>`.
 
@@ -72,12 +73,13 @@ Three layers handle connectivity:
 
 ### Key Data Flow
 
-- Game master creates a game → starts TCP server → other devices connect via Wi-Fi Direct (`SessionController.createGame` → `handleConnectionInfo`).
-- **Game-master role == Wi-Fi Direct group owner.** `handleConnectionInfo` sets `player.isGameMaster = info.isGroupOwner`; every GM-only branch (`PlaybackController`, GM overlay visibility, drift broadcast) keys off that. The GM is the *autonomous* group owner (`createGroup`), so the invariant only holds if **joiners never win group ownership** — otherwise a joined player inherits `isGameMaster() == true`, exposing GM controls and making its ExoPlayer listener re-broadcast intent against the real GM (both were field bugs, one cause). `connectToPlayer` enforces this: it `removeGroup()`s any stale local group first (group-owner intent is ignored while you already own an autonomous group), then connects with `groupOwnerIntent = 0`. Note this ties the game role to P2P topology and so supports exactly one GM; a true multi-GM feature would need role latched from the CREATE/JOIN action instead.
+- Game master creates a game → `SessionController.createGame` claims the host role and starts the TCP server (which binds all interfaces, so it's reachable on the hotspot subnet). Players dial it in `SessionController.connectToHost` using the resolved gateway address.
+- **`createGame` deliberately does NOT check `isWifiEnabled()`.** Hosting a mobile hotspot turns the *station* Wi-Fi radio off, so that check blocked the GM from ever starting a game (field-reported bug). The player-side `connectToHost` *does* check it, since a player needs Wi-Fi on to be on the hotspot.
+- **Game-master role is latched by the action, not by network topology.** `createGame` sets `player = localPlayer("Host", isGameMaster = true)`; `connectToHost` sets a non-GM `Player`. Both construct the `Player` **unconditionally** — `isGameMaster()` reads `player?.isGameMaster ?: false`, so leaving it null would silently demote the host to a player (no GM overlay, no playback broadcast, no auth gate). Every GM-only branch (`PlaybackController`, GM overlay visibility, drift broadcast) keys off `isGameMaster()`.
 - Players join with a password via challenge-response: server sends `PasswordChallenge(nonce)`, client replies with `PasswordMessage(SHA-256(password + nonce))`, server verifies and sends `PasswordResponseMessage(success)` followed by `pushInitialStateTo` (`VideoListMessage` + `PlaybackCommand`).
 - Game master broadcasts: `PlaybackCommand` (PLAY_PAUSE, NEXT, PREVIOUS), `PlaybackState` (position-only drift sync, every 5s when playing), `AdvancedCommand` (TURN_OFF_SCREEN, DEACTIVATE_TORCH, LIGHTS_ON, LIGHTS_OFF), video playlists as `VideoListMessage`.
 - Clients auto-reconnect on disconnect via `ReconnectionManager` (exponential backoff with jitter, max 10 retries). `SessionController` observes the reconnect state flow and updates `connectionState` LiveData.
-- Videos are transferred to player devices' local storage via `FileTransfer` (orchestrated by `FileTransferOrchestrator`) so playback works on slow/intermittent connections. `handleVideoList` resolves each title against `filesDir` first; only missing files trigger a transfer.
+- Videos are transferred to player devices' local storage via `FileTransfer` (orchestrated by `FileTransferOrchestrator`) so playback works on slow/intermittent connections. `handleVideoList` resolves each title against `filesDir` first; only missing files trigger a transfer. The request carries no self-address — the GM replies to the source IP of the request's socket (`handleFileTransferRequest`'s `fromIp`), so `FileTransferRequest.targetAddress` is unread. It used to hold the Wi-Fi Direct MAC and *gated* the request on being non-null, which would have silently stopped every transfer once Wi-Fi Direct was removed.
 - Game master periodically broadcasts a `GameStateSnapshot` so all devices can resume after a crash.
 - Protocol version is checked during the `PasswordChallenge` handshake; mismatched versions show a `UiError.Critical` to the user.
 
@@ -110,20 +112,21 @@ Three layers handle connectivity:
 - `GameRepository` constructs dependencies directly (no DI framework): `GameSync(SocketNetworkManager())`, `FileTransfer()`, plus `SnapshotManager` and `PlaylistStore`. All four are constructor-injectable for tests.
 - `GameViewModel` takes `GameRepository` as a default constructor parameter and constructs `PlaybackController` / `FileTransferOrchestrator` / `SessionController` in property initializers. Controllers receive narrow callbacks (e.g. `isGameMaster: () -> Boolean`, `videosProvider: () -> List<Video>?`) rather than the full `GameViewModel`.
 - Cross-controller hooks: `SessionController` fires `onSessionStarted(isHost)` / `onSessionEnded(remoteInitiated)` callbacks so `GameViewModel` can start/stop periodic jobs and clear session-specific state. `handleClientDisconnected()` returns a Boolean indicating whether the caller should still handle roster cleanup (true for game master, false for player).
-- `MainActivity` delegates own the launcher (`PermissionHelper`), the camera/screen hardware (`LightsAndScreenDelegate`), the ExoPlayer (`PlaybackViewDelegate`), and the GM controls (`GmControlsDelegate`). The activity is a coordinator; `dispatchKeyEvent` is a one-line shim that forwards to `GmControlsDelegate`.
+- `MainActivity` delegates own the camera/screen hardware (`LightsAndScreenDelegate`), the ExoPlayer (`PlaybackViewDelegate`), the GM in-game controls (`GmControlsDelegate`), and the start-screen hotspots (`StartScreenControlsDelegate`). The activity is a coordinator; `dispatchKeyEvent` is a one-line shim that forwards to `GmControlsDelegate`.
 - `TestNetworkManager` in the test directory provides a mock `NetworkManager` for unit tests
 - `PasswordHasher` object handles nonce generation (`SecureRandom`) and SHA-256 hashing
 - `ReconnectionManager` uses `StateFlow<ReconnectionState>` observed by `SessionController` via `collectLatest`
 - App version derived from git tags at build time (`build.gradle`); `versionName` from latest `v*` tag, `versionCode` from tag count
-- Permissions are gated in `MainActivity` via `PermissionHelper.requirePermissions(...)` before any Wi-Fi P2P API call; the actual API calls retain `@SuppressLint("MissingPermission")` since the permission check is at the View boundary, not at the call site.
+- The app requests **no runtime permissions at all**: it never scans for devices — it only reads network state and opens TCP sockets — so `NEARBY_WIFI_DEVICES` / `ACCESS_FINE_LOCATION` are not declared, and CREATE/JOIN call straight through without a prompt. Torch uses `CameraManager.setTorchMode`, which also needs no runtime grant. `PermissionHelper` was deleted along with the Wi-Fi Direct scan gating; reintroduce a helper only if a genuinely permission-gated feature is added.
 
 ## Tests
 
-- 176 unit tests across the codebase as of R4.
-- `PlaybackControllerTest` (22), `FileTransferOrchestratorTest` (10), `SessionControllerTest` (23) cover the extracted controllers without Android view bindings.
+- 204 unit tests across the codebase.
+- `PlaybackControllerTest`, `FileTransferOrchestratorTest`, `SessionControllerTest` cover the extracted controllers without Android view bindings. `SessionControllerTest` injects a `resolveHostAddress` fake, so the session layer is testable without any Android networking.
+- `HostAddressResolverTest` and `PreparedGameStoreTest` are plain JVM (no Robolectric).
 - `GameViewModelTest` covers the remaining roster/snapshot/playlist glue and routes `NetworkEvent` events through the dispatcher to verify controller wiring.
 - `MainActivityTest` is a Robolectric `ActivityScenario` smoke test that catches construction-time wiring bugs (delegate init order, ViewModel factory failures, etc.).
-- `MainActivity` UI delegates are mostly thin view wiring. The exception now covered: `GmControlsDelegate`'s presenter HID key → GM action mapping is extracted into the pure `presenterActionFor(keyCode, ctrlPressed)` and tested in `GmControlsKeyMappingTest` (plain JVM, no Robolectric). `PermissionHelper` and `LightsAndScreenDelegate` still have testable logic that could be covered later if regressions appear.
+- `MainActivity` UI delegates are mostly thin view wiring. The exception now covered: `GmControlsDelegate`'s presenter HID key → GM action mapping is extracted into the pure `presenterActionFor(keyCode, ctrlPressed)` and tested in `GmControlsKeyMappingTest` (plain JVM, no Robolectric). `LightsAndScreenDelegate` still has testable logic that could be covered later if regressions appear.
 - Bluetooth presenter mapping is field-verified against a **Norwii N21 BLE**: page back/forward = DPAD_LEFT/RIGHT (default arrow mode) → Prev/Next; "Mark" button = Ctrl+P → toggle Light; Volume +/- deliberately unmapped. Capture new devices' keycodes with `adb logcat` (the app had a temporary `PresenterKeys` diagnostic log for this, since removed).
 
 ## Releases

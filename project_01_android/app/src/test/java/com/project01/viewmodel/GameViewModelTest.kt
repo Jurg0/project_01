@@ -1,11 +1,7 @@
 package com.project01.viewmodel
 
 import android.app.Application
-import android.content.Context
 import android.net.Uri
-import android.net.wifi.p2p.WifiP2pDevice
-import android.net.wifi.p2p.WifiP2pInfo
-import android.net.wifi.p2p.WifiP2pManager
 import android.os.Looper
 
 import androidx.arch.core.executor.testing.InstantTaskExecutorRule
@@ -74,15 +70,9 @@ class GameViewModelTest {
     private lateinit var mockSnapshotManager: SnapshotManager
     @Mock
     private lateinit var mockPlaylistStore: PlaylistStore
-    @Mock
-    private lateinit var mockWifiP2pManager: WifiP2pManager
-    @Mock
-    private lateinit var mockWifiP2pChannel: WifiP2pManager.Channel
 
     private lateinit var gameSyncEventLiveData: MutableLiveData<NetworkEvent>
-    private lateinit var connectionInfoLiveData: MutableLiveData<WifiP2pInfo>
     private lateinit var videosLiveData: MutableLiveData<List<Video>>
-    private lateinit var thisDeviceLiveData: MutableLiveData<WifiP2pDevice>
 
     private lateinit var gameViewModel: GameViewModel
 
@@ -94,9 +84,7 @@ class GameViewModelTest {
         MockitoAnnotations.openMocks(this)
 
         gameSyncEventLiveData = MutableLiveData<NetworkEvent>()
-        connectionInfoLiveData = MutableLiveData<WifiP2pInfo>()
         videosLiveData = MutableLiveData<List<Video>>()
-        thisDeviceLiveData = MutableLiveData<WifiP2pDevice>()
 
         `when`(mockGameRepository.gameSync).thenReturn(mockGameSync)
         `when`(mockGameRepository.snapshotManager).thenReturn(mockSnapshotManager)
@@ -106,18 +94,13 @@ class GameViewModelTest {
             kotlinx.coroutines.flow.MutableStateFlow(ReconnectionManager.ReconnectionState.Idle)
         )
         `when`(mockGameRepository.gameSyncEvent).thenReturn(gameSyncEventLiveData)
-        `when`(mockGameRepository.connectionInfo).thenReturn(connectionInfoLiveData)
         `when`(mockGameRepository.videos).thenReturn(videosLiveData)
         `when`(mockGameRepository.players).thenReturn(MutableLiveData())
         `when`(mockGameRepository.isGameStarted).thenReturn(MutableLiveData())
-        `when`(mockGameRepository.thisDevice).thenReturn(thisDeviceLiveData)
         `when`(mockGameRepository.toastMessage).thenReturn(MutableLiveData())
         `when`(mockGameRepository.fileTransferEvent).thenReturn(MutableLiveData())
-        whenever(mockGameRepository.wifiP2pManager).thenReturn(mockWifiP2pManager)
-        whenever(mockGameRepository.channel).thenReturn(mockWifiP2pChannel)
         whenever(mockGameRepository.isWifiEnabled()).thenReturn(true)
-        whenever(mockApplication.getSystemService(Context.WIFI_P2P_SERVICE)).thenReturn(mockWifiP2pManager)
-        whenever(mockWifiP2pManager.initialize(any(), any(), any())).thenReturn(mockWifiP2pChannel)
+        whenever(mockGameRepository.resolveHostAddress()).thenReturn("192.168.43.1")
         whenever(mockApplication.mainLooper).thenReturn(mock(Looper::class.java))
         // FileTransferOrchestrator captures these at GameViewModel construction.
         whenever(mockApplication.filesDir).thenReturn(java.io.File(System.getProperty("java.io.tmpdir"), "gvm-test").apply { mkdirs() })
@@ -343,11 +326,8 @@ class GameViewModelTest {
     @Test
     fun `handleGameSyncEvent ClientDisconnected triggers reconnect for non-game-master`() {
         whenever(mockGameSync.port).thenReturn(8888)
-        connectionInfoLiveData.value = WifiP2pInfo().apply {
-            groupFormed = true
-            isGroupOwner = false
-            groupOwnerAddress = java.net.InetAddress.getByName("192.168.1.1")
-        }
+        whenever(mockGameRepository.resolveHostAddress()).thenReturn("192.168.1.1")
+        gameViewModel.join("password")   // resolves the host and dials it, setting lastHost
 
         gameSyncEventLiveData.value = NetworkEvent.ClientDisconnected("192.168.1.1")
 
@@ -467,12 +447,8 @@ class GameViewModelTest {
     }
 
     private fun makeGameMaster(password: String) {
-        thisDeviceLiveData.value = WifiP2pDevice().apply { deviceName = "TestDevice" }
+        // The role is claimed directly by createGame now — there is no WifiP2pInfo to post.
         gameViewModel.createGame(password)
-        connectionInfoLiveData.value = WifiP2pInfo().apply {
-            groupFormed = true
-            isGroupOwner = true
-        }
     }
 
     @Test

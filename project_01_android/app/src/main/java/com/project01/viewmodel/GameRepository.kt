@@ -1,17 +1,12 @@
 package com.project01.viewmodel
 
 import android.app.Application
-import android.content.BroadcastReceiver
 import android.content.Context
-import android.content.IntentFilter
+import android.net.ConnectivityManager
 import android.net.Uri
-import android.net.wifi.p2p.WifiP2pDevice
-import android.net.wifi.p2p.WifiP2pInfo
-import android.net.wifi.p2p.WifiP2pManager
 import android.provider.OpenableColumns
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
-import com.project01.p2p.WifiDirectBroadcastReceiver
 import com.project01.session.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -56,9 +51,6 @@ class GameRepository(
     private val _isGameStarted = MutableLiveData<Boolean>()
     val isGameStarted: LiveData<Boolean> = _isGameStarted
 
-    private val _thisDevice = MutableLiveData<WifiP2pDevice>()
-    val thisDevice: LiveData<WifiP2pDevice> = _thisDevice
-
     private val _toastMessage = MutableLiveData<String>()
     val toastMessage: LiveData<String> = _toastMessage
 
@@ -76,13 +68,11 @@ class GameRepository(
     private val _gameSyncEvent = MutableLiveData<NetworkEvent>()
     val gameSyncEvent: LiveData<NetworkEvent> = _gameSyncEvent
 
-    var isWifiP2pEnabled = false
-
-    val wifiP2pManager: WifiP2pManager by lazy {
-        application.getSystemService(Context.WIFI_P2P_SERVICE) as WifiP2pManager
-    }
     private val wifiManager: android.net.wifi.WifiManager by lazy {
         application.getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager
+    }
+    private val connectivityManager: ConnectivityManager by lazy {
+        application.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
     }
 
     fun isWifiEnabled(): Boolean = wifiManager.isWifiEnabled
@@ -94,47 +84,61 @@ class GameRepository(
     }
 
     /**
-     * Whether Wi-Fi Direct scanning can work. On API 33+ we hold NEARBY_WIFI_DEVICES with
-     * `neverForLocation`, so the system Location toggle is irrelevant → always true. On
-     * API < 33, P2P discovery silently returns nothing unless Location is on.
+     * The game host's IP, or null if this device isn't on the game's network.
+     *
+     * The game master hosts the hotspot every device is already connected to, so the GM is
+     * this network's gateway — no discovery protocol needed. Three sources are tried in
+     * order because the fleet spans many Android versions (minSdk 24):
+     *  1. `dhcpServerAddress` — API 30+ only (the A20e is exactly API 30); the most precise,
+     *     since for a hotspot the DHCP server *is* the access point.
+     *  2. the default route's gateway — available on every supported version.
+     *  3. the legacy `DhcpInfo.gateway` int — deprecated in API 31 but still functional, and
+     *     the last resort for the oldest phones.
+     * The chosen source is logged so a field failure can be diagnosed from one log line.
      */
-    fun isLocationEnabled(): Boolean {
-        if (android.os.Build.VERSION.SDK_INT >= 33) return true
-        val lm = application.getSystemService(Context.LOCATION_SERVICE) as? android.location.LocationManager
-            ?: return true
-        return if (android.os.Build.VERSION.SDK_INT >= 28) {
-            lm.isLocationEnabled
-        } else {
-            @Suppress("DEPRECATION")
-            lm.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER) ||
-                lm.isProviderEnabled(android.location.LocationManager.NETWORK_PROVIDER)
+    fun resolveHostAddress(): String? {
+        val linkProperties = try {
+            connectivityManager.activeNetwork?.let { connectivityManager.getLinkProperties(it) }
+        } catch (e: Exception) {
+            android.util.Log.w(TAG, "getLinkProperties failed", e)
+            null
         }
-    }
 
-    fun openLocationSettings() {
-        val intent = android.content.Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS)
-            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-        application.startActivity(intent)
+        if (linkProperties != null && android.os.Build.VERSION.SDK_INT >= 30) {
+            val dhcpServer = linkProperties.dhcpServerAddress?.hostAddress
+            if (HostAddressResolver.isUsableHost(dhcpServer)) {
+                android.util.Log.d(TAG, "host = $dhcpServer (dhcpServerAddress)")
+                return dhcpServer
+            }
+        }
+
+        // Prefer the default route, but accept any route that names a gateway — a hotspot
+        // with no upstream internet doesn't always publish a default route.
+        val routeGateway = linkProperties?.routes
+            ?.sortedByDescending { it.isDefaultRoute }
+            ?.firstNotNullOfOrNull { it.gateway?.hostAddress }
+        if (HostAddressResolver.isUsableHost(routeGateway)) {
+            android.util.Log.d(TAG, "host = $routeGateway (route gateway)")
+            return routeGateway
+        }
+
+        @Suppress("DEPRECATION")
+        val dhcpGateway = try {
+            HostAddressResolver.formatDhcpGateway(wifiManager.dhcpInfo?.gateway ?: 0)
+        } catch (e: Exception) {
+            android.util.Log.w(TAG, "dhcpInfo failed", e)
+            null
+        }
+        if (HostAddressResolver.isUsableHost(dhcpGateway)) {
+            android.util.Log.d(TAG, "host = $dhcpGateway (dhcpInfo)")
+            return dhcpGateway
+        }
+
+        android.util.Log.w(TAG, "could not resolve a host address — not connected to the game's Wi-Fi?")
+        return null
     }
 
     private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-
-    val intentFilter = IntentFilter().apply {
-        addAction(WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION)
-        addAction(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION)
-        addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION)
-        addAction(WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION)
-    }
-
-    private val _connectionInfo = MutableLiveData<WifiP2pInfo>()
-    val connectionInfo: LiveData<WifiP2pInfo> = _connectionInfo
-
-    val connectionInfoListener = WifiP2pManager.ConnectionInfoListener { info ->
-        _connectionInfo.postValue(info)
-    }
-
-    val channel: WifiP2pManager.Channel = wifiP2pManager.initialize(application, application.mainLooper, null)
-    internal val broadcastReceiver: BroadcastReceiver = WifiDirectBroadcastReceiver(wifiP2pManager, channel, this)
 
     init {
         observeGameSyncEvents()
@@ -154,10 +158,6 @@ class GameRepository(
             if (event is FileTransferEvent.Success) onFileReceived?.invoke(event.fileName)
             _fileTransferEvent.postValue(event)
         }.launchIn(coroutineScope)
-    }
-
-    fun setThisDevice(device: WifiP2pDevice) {
-        _thisDevice.postValue(device)
     }
 
     fun setGameStarted(started: Boolean) {
@@ -206,13 +206,11 @@ class GameRepository(
         coroutineScope.cancel()
         gameSync.shutdown()
         fileTransfer.shutdown()
-        try {
-            wifiP2pManager.clearLocalServices(channel, null)
-            wifiP2pManager.removeGroup(channel, null)
-            channel.close()
-        } catch (e: Exception) {
-            android.util.Log.w("GameRepository", "Wi-Fi P2P cleanup failed", e)
-        }
+    }
+
+    companion object {
+        /** Logcat tag for host-address resolution: `adb logcat -s GameNet`. */
+        private const val TAG = "GameNet"
     }
 }
 

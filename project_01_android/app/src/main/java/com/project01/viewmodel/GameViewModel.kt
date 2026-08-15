@@ -8,7 +8,6 @@ import android.content.Context
 import android.net.Uri
 import android.os.BatteryManager
 import android.net.wifi.p2p.WifiP2pDevice
-import android.net.wifi.p2p.WifiP2pManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
@@ -30,7 +29,6 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     val players: LiveData<List<Player>> = repository.players
     val videos: LiveData<List<Video>> = repository.videos
     val isGameStarted: LiveData<Boolean> = repository.isGameStarted
-    val thisDevice: LiveData<WifiP2pDevice> = repository.thisDevice
     val toastMessage: LiveData<String> = repository.toastMessage
     val fileTransferEvent: LiveData<FileTransferEvent> = repository.fileTransferEvent
     private val _uiError = MutableLiveData<UiError>()
@@ -68,15 +66,11 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     val sessionController: SessionController = SessionController(
         gameSync = repository.gameSync,
         playbackController = playbackController,
-        wifiP2pManager = repository.wifiP2pManager,
-        channel = repository.channel,
         scope = viewModelScope,
-        thisDeviceProvider = { thisDevice.value },
         videosProvider = { videos.value },
         isWifiEnabled = { repository.isWifiEnabled() },
         openWifiSettings = { repository.openWifiSettings() },
-        isLocationEnabled = { repository.isLocationEnabled() },
-        openLocationSettings = { repository.openLocationSettings() },
+        resolveHostAddress = { repository.resolveHostAddress() },
         postUiError = { _uiError.postValue(it) },
         onSessionStarted = { isHost -> onSessionStarted(isHost) },
         onSessionEnded = { remoteInitiated -> onSessionEnded(remoteInitiated) },
@@ -90,9 +84,6 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     private var periodicSyncJob: Job? = null
     private var periodicStatusJob: Job? = null
 
-    private val connectionInfoObserver = Observer<android.net.wifi.p2p.WifiP2pInfo> { info ->
-        sessionController.handleConnectionInfo(info)
-    }
     private val gameSyncEventObserver = Observer<NetworkEvent> { event ->
         handleGameSyncEvent(event)
     }
@@ -102,7 +93,6 @@ class GameViewModel(application: Application, val repository: GameRepository = G
 
     init {
         repository.gameSyncEvent.observeForever(gameSyncEventObserver)
-        repository.connectionInfo.observeForever(connectionInfoObserver)
         // Drive the player-side content:// → file:// swap from EVERY FileTransfer
         // Success. This bypasses the coalescing fileTransferEvent LiveData (which
         // dropped Success events during multi-video pulls, leaving all but the first
@@ -308,34 +298,24 @@ class GameViewModel(application: Application, val repository: GameRepository = G
             repository.restoreVideos(newVideos)
             return
         }
-        val resolved = fileTransferOrchestrator.resolveAndRequestMissing(
-            newVideos,
-            thisDevice.value?.deviceAddress,
-            senderAddress,
-        )
+        val resolved = fileTransferOrchestrator.resolveAndRequestMissing(newVideos, senderAddress)
         repository.restoreVideos(resolved)
     }
 
     // --- Session lifecycle (delegated to SessionController) ---
 
-    @SuppressLint("MissingPermission") // Permission checked in MainActivity before calling
     fun createGame(password: String) = sessionController.createGame(password)
 
     fun joinGame(name: String, password: String) = sessionController.joinGame(name, password)
 
     /**
-     * Player join for the new concept: stash the (auto-named) credentials and auto-discover
-     * + connect to the single game host via DNS-SD — no device-list picking. The password
-     * hard gate then decides whether the session actually starts.
+     * Player join: stash the (auto-named) credentials, then dial the game master on the
+     * hotspot this device is already connected to. The password hard gate then decides
+     * whether the session actually starts.
      */
-    @SuppressLint("MissingPermission") // Permission checked in MainActivity before calling
     fun join(password: String) {
-        if (!repository.isWifiEnabled()) {
-            sessionController.postWifiOffError()
-            return
-        }
         sessionController.joinGame(autoPlayerName(), password)
-        sessionController.startServiceDiscovery()
+        sessionController.connectToHost()
     }
 
     private fun autoPlayerName(): String =
@@ -348,7 +328,6 @@ class GameViewModel(application: Application, val repository: GameRepository = G
      * a right vs wrong password (the screen goes blue either way) — the GM privately notices
      * the expected video doesn't play.
      */
-    @SuppressLint("MissingPermission") // Permission checked in MainActivity before calling
     fun createGameForPassword(enteredPassword: String) {
         val match = repository.preparedGameStore.findByPassword(enteredPassword)
         if (match != null) {
@@ -359,10 +338,6 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         }
     }
 
-    @SuppressLint("MissingPermission") // Permission checked in MainActivity before calling
-    fun connectToPlayer(player: Player) = sessionController.connectToPlayer(player)
-
-    @SuppressLint("MissingPermission") // Permission checked in MainActivity before calling
     fun endGame() = sessionController.endGame()
 
     fun retryConnection() = sessionController.retryConnection()
@@ -523,7 +498,9 @@ class GameViewModel(application: Application, val repository: GameRepository = G
             playbackPosition = playbackController.observedPosition(),
             isPlaying = current.isPlaying,
             playerAddresses = players.value?.map { it.device.deviceAddress } ?: emptyList(),
-            gameMasterAddress = if (isGameMaster()) thisDevice.value?.deviceAddress ?: "" else "",
+            // Informational only (snapshot provenance). There is no framework-supplied
+            // device identity now that Wi-Fi Direct is gone.
+            gameMasterAddress = "",
             timestamp = System.currentTimeMillis()
         )
     }
@@ -559,7 +536,6 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         periodicSyncJob?.cancel()
         periodicStatusJob?.cancel()
         repository.snapshotManager.stopPeriodicSnapshots()
-        repository.connectionInfo.removeObserver(connectionInfoObserver)
         repository.gameSyncEvent.removeObserver(gameSyncEventObserver)
         repository.shutdown()
     }

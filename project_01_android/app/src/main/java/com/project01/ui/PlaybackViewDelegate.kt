@@ -36,11 +36,19 @@ class PlaybackViewDelegate(
 
     fun mediaItemCount(): Int = exoPlayer?.mediaItemCount ?: 0
 
-    fun isAtEndOfCurrent(): Boolean {
-        val player = exoPlayer ?: return false
-        val duration = player.duration
-        return duration > 0 && player.currentPosition >= duration - END_OF_ITEM_THRESHOLD_MS
-    }
+    /**
+     * True when ExoPlayer is parked at the end of the current item.
+     *
+     * Reads [Player.STATE_ENDED] directly rather than comparing position against duration:
+     * `pauseAtEndOfMediaItems` parks the player in STATE_ENDED at exactly that point, so this
+     * is the authoritative signal. The old `position >= duration - 500ms` heuristic misfired
+     * on short videos (a 2s clip counts as "at the end" for a quarter of its length) and
+     * while a seek was still settling (duration/position briefly belong to different items),
+     * which made the GM's Play button advance when it should have resumed — skipping a video
+     * and desyncing the group.
+     */
+    fun isAtEndOfCurrent(): Boolean =
+        exoPlayer?.playbackState == Player.STATE_ENDED
 
     fun onResume() {
         initializePlayer()
@@ -146,7 +154,5 @@ class PlaybackViewDelegate(
         /** Tolerance for "this is the same position" — avoids re-seeking on every
          *  intent emission when only the position field updated marginally. */
         private const val SEEK_TOLERANCE_MS = 500L
-        /** Window before the end of an item that counts as "at end of current". */
-        private const val END_OF_ITEM_THRESHOLD_MS = 500L
     }
 }

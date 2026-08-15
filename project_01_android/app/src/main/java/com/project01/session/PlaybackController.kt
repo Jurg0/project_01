@@ -184,7 +184,16 @@ class PlaybackController(
         // playWhenReady=false lands). Honoring it let the GM diverge into
         // "playing the next video" after an advance-and-pause command.
         if (isPlaying && !current.isPlaying) return
-        if (isPlaying == current.isPlaying && index == current.videoIndex) return
+        // The listener must never MOVE the playlist position — it may only report that the
+        // commanded video ended. `pauseAtEndOfMediaItems` parks ExoPlayer on the same item it
+        // just finished, so a legitimate end-of-video report always carries the commanded
+        // index; any other index is a transient artifact of a seek that hasn't settled.
+        // Committing those re-broadcast ExoPlayer's in-between index as if the GM had chosen
+        // it, which desynced every player when the GM skipped back and forth quickly (the
+        // 500ms grace window is easily outlived by a seek across items, especially with short
+        // videos that reach their end almost immediately after the seek).
+        if (index != current.videoIndex) return
+        if (isPlaying == current.isPlaying) return
         val next = PlaybackIntent(index, positionMs, isPlaying)
         _intent.value = next
         scope.launch {

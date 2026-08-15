@@ -8,6 +8,11 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Normal (install-time) permission, no prompt. Required twice over: WifiLock.acquire()
+         in ConnectionService needs it, and on Android 14 a foregroundServiceType of
+         "connectedDevice" requires the app to hold one of CHANGE_WIFI_STATE /
+         CHANGE_NETWORK_STATE / BLUETOOTH_*. Without it the service crashes on game start. -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"

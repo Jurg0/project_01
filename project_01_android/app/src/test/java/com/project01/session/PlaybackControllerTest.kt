@@ -332,6 +332,46 @@ class PlaybackControllerTest {
     }
 
     @Test
+    fun `onPlayerTransition on a different index is ignored`() = runTest {
+        // Field repro (phones desync when skipping back and forth, especially with short
+        // videos): after a Prev/Play burst ExoPlayer is still settling a seek and reports a
+        // transition for the item it is leaving — outside the 500ms grace window, because a
+        // cross-item seek easily outlives it. Committing that would re-broadcast ExoPlayer's
+        // in-between index as if the GM had chosen it, dragging every player to the wrong
+        // video. The listener may only report that the COMMANDED video ended.
+        var now = 0L
+        val (controller, broadcasts) = buildController(clock = { now })
+        controller.play(3)
+        now = PlaybackController.COMMAND_GRACE_MS + 1
+        broadcasts.clear()
+
+        controller.onPlayerTransition(index = 2, positionMs = 10_000L, isPlaying = false)
+
+        val intent = controller.currentIntent()
+        assertEquals("commanded index must survive", 3, intent.videoIndex)
+        assertTrue("commanded play state must survive", intent.isPlaying)
+        assertTrue("nothing may be broadcast", broadcasts.isEmpty())
+    }
+
+    @Test
+    fun `onPlayerTransition still reports the natural end of the commanded video`() = runTest {
+        // The guard above must not break the listener's one legitimate job: pauseAtEndOfMediaItems
+        // parks ExoPlayer on the same item it finished, so a real end-of-video report carries
+        // the commanded index and must still flip intent to paused and broadcast.
+        var now = 0L
+        val (controller, broadcasts) = buildController(clock = { now })
+        controller.play(3)
+        now = PlaybackController.COMMAND_GRACE_MS + 1
+        broadcasts.clear()
+
+        controller.onPlayerTransition(index = 3, positionMs = 8_000L, isPlaying = false)
+
+        assertFalse(controller.currentIntent().isPlaying)
+        assertEquals(3, controller.currentIntent().videoIndex)
+        assertEquals(1, broadcasts.size)
+    }
+
+    @Test
     fun `onPlayerTransition never starts playback when intent is paused`() = runTest {
         // Field repro (GM+player desync): GM presses Play/Next mid-video.
         // advanceOrResume commits (2, 0, isPlaying=false) — advance to the next

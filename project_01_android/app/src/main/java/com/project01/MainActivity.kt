@@ -1,8 +1,12 @@
 package com.project01
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
+import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
@@ -315,8 +319,25 @@ class MainActivity : AppCompatActivity() {
         })
 
         gameViewModel.requestEnableBluetooth.observe(this, Observer {
-            val enableBtIntent = Intent(android.bluetooth.BluetoothAdapter.ACTION_REQUEST_ENABLE)
-            enableBluetoothLauncher.launch(enableBtIntent)
+            // Launching ACTION_REQUEST_ENABLE throws SecurityException on Android 12+ unless
+            // BLUETOOTH_CONNECT is *granted*, and the app never requests it — that crashed
+            // the app on first run whenever Bluetooth happened to be off.
+            //
+            // We deliberately don't ask for the permission: this prompt is only a courtesy
+            // reminder for the game master's presenter remote. A presenter is paired in
+            // system settings and delivers HID key events straight to the focused window, so
+            // the app needs no Bluetooth permission for it to work. Skipping the reminder
+            // costs nothing, and it keeps players from seeing a permission dialog they'd
+            // never need.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT)
+                != PackageManager.PERMISSION_GRANTED
+            ) return@Observer
+            try {
+                enableBluetoothLauncher.launch(Intent(android.bluetooth.BluetoothAdapter.ACTION_REQUEST_ENABLE))
+            } catch (e: SecurityException) {
+                Log.w("MainActivity", "Could not prompt to enable Bluetooth", e)
+            }
         })
 
         gameViewModel.advancedCommand.observe(this, Observer { command ->

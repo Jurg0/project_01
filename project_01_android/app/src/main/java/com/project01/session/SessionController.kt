@@ -38,8 +38,18 @@ class SessionController(
     private val videosProvider: () -> List<Video>?,
     private val isWifiEnabled: () -> Boolean,
     private val openWifiSettings: () -> Unit,
-    /** The game host's IP — the gateway of the hotspot we're already joined to, or null. */
+    /** Ask the game master for its address over the LAN. Null if nothing answered. */
+    private val discoverHost: suspend () -> String? = { null },
+    /** Game-master side: answer discovery probes (true) or stop answering (false). */
+    private val setDiscoveryResponder: (Boolean) -> Unit = {},
+    /**
+     * Fallback for naming the host when discovery finds nothing — derived from the link's
+     * own configuration, which is why it is only a fallback: it depends on how the hosting
+     * phone happens to configure its hotspot, and that varies by device and Android version.
+     */
     private val resolveHostAddress: () -> String?,
+    /** Pin this process's sockets to the game's Wi-Fi network (true) or release them (false). */
+    private val setGameNetworkBound: (Boolean) -> Unit = {},
     private val postUiError: (UiError) -> Unit,
     private val onSessionStarted: (isHost: Boolean) -> Unit,
     private val onSessionEnded: (remoteInitiated: Boolean) -> Unit,
@@ -90,23 +100,30 @@ class SessionController(
                 "Turn on Wi-Fi and connect to the game's hotspot.", "Open Wi-Fi") { openWifiSettings() })
             return
         }
-        val host = resolveHostAddress()
-        if (host == null) {
-            // Immediate, actionable failure — the old Wi-Fi Direct path silently scanned
-            // for 60s before admitting defeat.
-            _connectionState.postValue(ConnectionStatus.DISCONNECTED)
-            postUiError(UiError.Recoverable(
-                "Not connected to the game's network. Join the host's hotspot, then try again.",
-                "Open Wi-Fi") { openWifiSettings() })
-            return
-        }
-        isEndingGame = false
-        pendingAuthRejected = false
-        player = localPlayer(localPlayerName ?: "Player", isGameMaster = false)
-        lastHost = host
-        lastPort = gameSync.port
         _connectionState.postValue(ConnectionStatus.CONNECTING)
-        gameSync.connectTo(host, gameSync.port)
+        // Pin our sockets to the hotspot before probing or dialing: when the phone has mobile
+        // data on, the (internet-less) hotspot isn't the default network and traffic can
+        // otherwise leave over cellular and never reach the host.
+        setGameNetworkBound(true)
+        scope.launch {
+            // Ask the host where it is; only fall back to deriving an address from the link,
+            // which is what proved unreliable across devices.
+            val host = discoverHost() ?: resolveHostAddress()
+            if (host == null) {
+                setGameNetworkBound(false)
+                _connectionState.postValue(ConnectionStatus.DISCONNECTED)
+                postUiError(UiError.Recoverable(
+                    "Couldn't find the game. Make sure you're on the host's hotspot and the host has started the game.",
+                    "Retry") { connectToHost() })
+                return@launch
+            }
+            isEndingGame = false
+            pendingAuthRejected = false
+            player = localPlayer(localPlayerName ?: "Player", isGameMaster = false)
+            lastHost = host
+            lastPort = gameSync.port
+            gameSync.connectTo(host, gameSync.port)
+        }
     }
 
     /**
@@ -227,6 +244,7 @@ class SessionController(
             gameSync.reconnectionManager.stopReconnecting()
             lastHost = null
             lastPort = null
+            setGameNetworkBound(false)   // give the phone its normal network back
             _connectionState.postValue(ConnectionStatus.DISCONNECTED)
             postUiError(UiError.Recoverable("Incorrect password. Returned to start."))
         }
@@ -242,6 +260,7 @@ class SessionController(
         isEndingGame = true
         gameSync.reconnectionManager.stopReconnecting()
         pendingAuthRejected = false
+        setGameNetworkBound(false)   // give the phone its normal network back
         player = null
         lastHost = null
         lastPort = null
@@ -294,6 +313,8 @@ class SessionController(
         lastHost = null
         lastPort = null
         gameSync.startServer()
+        // Answer discovery probes so joiners can find us without deriving our address.
+        setDiscoveryResponder(true)
         _connectionState.postValue(ConnectionStatus.HOST)
         onSessionStarted(true)
     }
@@ -312,6 +333,7 @@ class SessionController(
 
     fun endGame() {
         isEndingGame = true
+        setDiscoveryResponder(false)   // stop answering probes for a game that's ending
         authTimeouts.values.forEach { it.cancel() }
         authTimeouts.clear()
         authenticatedClients.clear()

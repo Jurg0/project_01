@@ -42,10 +42,15 @@ class SessionControllerTest {
     private val sessionEnds = mutableListOf<Boolean>()
     private val authenticated = mutableListOf<String>()
     private val disconnected = mutableListOf<String>()
+    /** true = pinned to the game's Wi-Fi network, false = released. */
+    private val networkBinds = mutableListOf<Boolean>()
     private var currentVideos: List<Video> = emptyList()
     private var wifiEnabled = true
-    /** What resolveHostAddress() returns — the GM's IP (the hotspot gateway), or null. */
+    /** What resolveHostAddress() returns — derived from the link, used only as a fallback. */
     private var hostAddress: String? = "192.168.43.1"
+    /** What LAN discovery returns — the GM answering a probe. */
+    private var discoveredHost: String? = null
+    private val discoveryResponder = mutableListOf<Boolean>()
 
     private val dispatcher = UnconfinedTestDispatcher()
     private val scope = TestScope(dispatcher)
@@ -58,7 +63,10 @@ class SessionControllerTest {
             videosProvider = { currentVideos },
             isWifiEnabled = { wifiEnabled },
             openWifiSettings = { },
+            discoverHost = { discoveredHost },
+            setDiscoveryResponder = { discoveryResponder.add(it) },
             resolveHostAddress = { hostAddress },
+            setGameNetworkBound = { networkBinds.add(it) },
             postUiError = { uiErrors.add(it) },
             onSessionStarted = { sessionStarts.add(it) },
             onSessionEnded = { sessionEnds.add(it) },
@@ -76,8 +84,11 @@ class SessionControllerTest {
         currentVideos = emptyList()
         wifiEnabled = true
         hostAddress = "192.168.43.1"
+        discoveredHost = null
+        discoveryResponder.clear()
         authenticated.clear()
         disconnected.clear()
+        networkBinds.clear()
         network = TestNetworkManager().apply {
             onBroadcast = { msg -> broadcasts.add(msg) }
             onSendTo = { addr, msg -> sentTo.add(addr to msg) }
@@ -380,6 +391,8 @@ class SessionControllerTest {
     @Test
     fun `connectToHost dials the resolved gateway and does not start the session yet`() {
         hostAddress = "192.168.43.1"
+        discoveredHost = null
+        discoveryResponder.clear()
         var dialed: Pair<String, Int>? = null
         network.onConnectTo = { host, port -> dialed = host to port }
         val controller = newController()
@@ -392,6 +405,86 @@ class SessionControllerTest {
         // The password hard gate still owns session start.
         assertTrue(sessionStarts.isEmpty())
         assertFalse(controller.isGameMaster())
+    }
+
+    @Test
+    fun `connectToHost prefers the address the host reports over one derived from the link`() {
+        // Deriving the host address failed across devices (no dhcpServerAddress below API 30,
+        // an IPv6-only gateway on one phone, a .1 that answered nothing on another), so a
+        // reply from the actual host always wins.
+        discoveredHost = "10.245.195.42"
+        hostAddress = "192.168.43.1"
+        var dialed: Pair<String, Int>? = null
+        network.onConnectTo = { host, port -> dialed = host to port }
+        val controller = newController()
+
+        controller.connectToHost()
+
+        assertEquals("10.245.195.42", dialed?.first)
+    }
+
+    @Test
+    fun `connectToHost falls back to the derived address when nothing answers`() {
+        discoveredHost = null
+        hostAddress = "192.168.43.1"
+        var dialed: Pair<String, Int>? = null
+        network.onConnectTo = { host, port -> dialed = host to port }
+        val controller = newController()
+
+        controller.connectToHost()
+
+        assertEquals("192.168.43.1", dialed?.first)
+    }
+
+    @Test
+    fun `connectToHost reports a clear failure and releases the network when the host is unfindable`() {
+        discoveredHost = null
+        hostAddress = null
+        var dialed = false
+        network.onConnectTo = { _, _ -> dialed = true }
+        val controller = newController()
+
+        controller.connectToHost()
+
+        assertFalse("must not dial a fabricated address", dialed)
+        assertEquals(ConnectionStatus.DISCONNECTED, controller.connectionState.value)
+        assertTrue(uiErrors.any { it is UiError.Recoverable })
+        assertTrue("binding must be released again", networkBinds.contains(false))
+    }
+
+    @Test
+    fun `createGame starts answering discovery probes and ending the game stops it`() = runTest(dispatcher) {
+        val controller = newController()
+
+        controller.createGame("secret")
+        assertEquals(listOf(true), discoveryResponder)
+
+        controller.endGame()
+        advanceUntilIdle()
+        assertEquals(listOf(true, false), discoveryResponder)
+    }
+
+    @Test
+    fun `connectToHost pins the process to the game network before dialing`() {
+        // A phone with mobile data on keeps cellular as its default network (the hotspot has
+        // no internet), so an unbound socket can leave over cellular and never reach the host
+        // — one player connected, another failed with ConnectException in the field.
+        val controller = newController()
+
+        controller.connectToHost()
+
+        assertEquals(listOf(true), networkBinds)
+    }
+
+    @Test
+    fun `ending the game releases the network binding`() {
+        val controller = newController()
+        controller.connectToHost()
+        networkBinds.clear()
+
+        controller.handleEndGame()
+
+        assertEquals("the phone must get its normal network back", listOf(false), networkBinds)
     }
 
     @Test

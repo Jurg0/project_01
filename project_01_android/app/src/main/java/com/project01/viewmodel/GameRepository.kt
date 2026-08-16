@@ -3,6 +3,7 @@ package com.project01.viewmodel
 import android.app.Application
 import android.content.Context
 import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.lifecycle.LiveData
@@ -30,6 +31,7 @@ class GameRepository(
     val preparedGameStore: PreparedGameStore = PreparedGameStore(
         java.io.File(application.filesDir, "prepared")
     ),
+    val hostDiscovery: HostDiscovery = HostDiscovery(),
 ) {
 
     private val _players = MutableLiveData<List<Player>>()
@@ -97,30 +99,44 @@ class GameRepository(
      * The chosen source is logged so a field failure can be diagnosed from one log line.
      */
     fun resolveHostAddress(): String? {
+        val wifi = wifiNetwork()
         val linkProperties = try {
-            connectivityManager.activeNetwork?.let { connectivityManager.getLinkProperties(it) }
+            wifi?.let { connectivityManager.getLinkProperties(it) }
         } catch (e: Exception) {
             android.util.Log.w(TAG, "getLinkProperties failed", e)
             null
         }
 
-        if (linkProperties != null && android.os.Build.VERSION.SDK_INT >= 30) {
-            val dhcpServer = linkProperties.dhcpServerAddress?.hostAddress
-            if (HostAddressResolver.isUsableHost(dhcpServer)) {
-                android.util.Log.d(TAG, "host = $dhcpServer (dhcpServerAddress)")
-                return dhcpServer
+        // Our own IPv4 on the Wi-Fi link, used to sanity-check candidates: the hotspot's
+        // access point is always on our subnet. Logged because it makes a field log
+        // self-explanatory — "own ip = 192.168.43.57" tells you the host must be 192.168.43.x.
+        val ownIpv4 = linkProperties?.linkAddresses
+            ?.mapNotNull { (it.address as? java.net.Inet4Address)?.hostAddress }
+            ?.firstOrNull()
+        android.util.Log.d(TAG, "own ip = $ownIpv4")
+
+        fun accept(candidate: String?, source: String): String? {
+            if (!HostAddressResolver.isUsableHost(candidate)) return null
+            if (!HostAddressResolver.sameIpv4Subnet(ownIpv4, candidate)) {
+                android.util.Log.w(TAG, "ignoring $candidate ($source) — not on our subnet ($ownIpv4)")
+                return null
             }
+            android.util.Log.d(TAG, "host = $candidate ($source)")
+            return candidate
+        }
+
+        if (linkProperties != null && android.os.Build.VERSION.SDK_INT >= 30) {
+            accept(linkProperties.dhcpServerAddress?.hostAddress, "dhcpServerAddress")?.let { return it }
         }
 
         // Prefer the default route, but accept any route that names a gateway — a hotspot
-        // with no upstream internet doesn't always publish a default route.
-        val routeGateway = linkProperties?.routes
+        // with no upstream internet doesn't always publish a default route. IPv4 only: an
+        // IPv6 default route's gateway is a link-local address we cannot dial.
+        linkProperties?.routes
+            ?.filter { it.gateway is java.net.Inet4Address }
             ?.sortedByDescending { it.isDefaultRoute }
-            ?.firstNotNullOfOrNull { it.gateway?.hostAddress }
-        if (HostAddressResolver.isUsableHost(routeGateway)) {
-            android.util.Log.d(TAG, "host = $routeGateway (route gateway)")
-            return routeGateway
-        }
+            ?.firstNotNullOfOrNull { accept(it.gateway?.hostAddress, "route gateway") }
+            ?.let { return it }
 
         @Suppress("DEPRECATION")
         val dhcpGateway = try {
@@ -129,13 +145,59 @@ class GameRepository(
             android.util.Log.w(TAG, "dhcpInfo failed", e)
             null
         }
-        if (HostAddressResolver.isUsableHost(dhcpGateway)) {
-            android.util.Log.d(TAG, "host = $dhcpGateway (dhcpInfo)")
-            return dhcpGateway
-        }
+        accept(dhcpGateway, "dhcpInfo")?.let { return it }
+
+        // Nothing on the link names an IPv4 gateway (seen in the field: a connected route with
+        // no gateway plus an IPv6 default route). The game master is the access point, so
+        // derive it from our own lease as .1 of our /24.
+        accept(HostAddressResolver.accessPointOfSubnet(ownIpv4), "subnet .1 convention")?.let { return it }
 
         android.util.Log.w(TAG, "could not resolve a host address — not connected to the game's Wi-Fi?")
         return null
+    }
+
+    /**
+     * The Wi-Fi network, which is NOT necessarily the *active* (default) one.
+     *
+     * The game's hotspot has no upstream internet, so Android flags it "no internet" and, on
+     * a phone with mobile data switched on, keeps **cellular** as the default network. Asking
+     * for `activeNetwork` there returns cellular, whose routes yield a carrier gateway — we
+     * then dialled that on port 8888 and got a ConnectException, while a phone with no SIM
+     * (Wi-Fi is its default) connected fine. Always pick the Wi-Fi transport explicitly.
+     */
+    private fun wifiNetwork(): android.net.Network? = try {
+        @Suppress("DEPRECATION")
+        connectivityManager.allNetworks.firstOrNull { network ->
+            connectivityManager.getNetworkCapabilities(network)
+                ?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+        }
+    } catch (e: Exception) {
+        android.util.Log.w(TAG, "could not enumerate networks", e)
+        null
+    }
+
+    /**
+     * Route this process's sockets over the game's Wi-Fi network (or restore the system
+     * default when [bound] is false).
+     *
+     * Resolving the right address is not enough: when the hotspot isn't the default network,
+     * an unbound socket can still be sent out over cellular and fail to reach the host.
+     * Binding pins the game's TCP traffic to the Wi-Fi network for the session. The game
+     * needs no internet, so losing the default route while bound costs nothing — but it must
+     * be released at session end, which the callers do.
+     */
+    fun setGameNetworkBound(bound: Boolean) {
+        try {
+            val target = if (bound) wifiNetwork() else null
+            if (bound && target == null) {
+                android.util.Log.w(TAG, "no Wi-Fi network to bind to")
+                return
+            }
+            connectivityManager.bindProcessToNetwork(target)
+            android.util.Log.d(TAG, if (bound) "bound process to Wi-Fi network" else "released network binding")
+        } catch (e: Exception) {
+            android.util.Log.w(TAG, "bindProcessToNetwork failed", e)
+        }
     }
 
     private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -202,8 +264,17 @@ class GameRepository(
         }
     }
 
+    /** Game-master side: answer LAN discovery probes so joiners can find us. */
+    fun setDiscoveryResponder(running: Boolean) {
+        if (running) hostDiscovery.startResponding(coroutineScope) else hostDiscovery.stopResponding()
+    }
+
+    /** Player side: ask the game master for its address. Null if nothing answered. */
+    suspend fun discoverHost(): String? = hostDiscovery.findHost()
+
     fun shutdown() {
         coroutineScope.cancel()
+        hostDiscovery.stopResponding()
         gameSync.shutdown()
         fileTransfer.shutdown()
     }

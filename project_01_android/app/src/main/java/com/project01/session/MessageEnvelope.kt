@@ -12,7 +12,14 @@ import java.nio.ByteBuffer
 data class VideoListMessage(val videos: List<VideoDto>) : GameMessage
 
 @Serializable
-data class VideoDto(val uriString: String, val title: String)
+data class VideoDto(
+    val uriString: String,
+    val title: String,
+    /** Bytes of the host's original file, or -1 when unknown (e.g. a playlist prepared by an
+     *  older build). Unknown means "trust the cached file", so nothing already synced is
+     *  invalidated by upgrading. */
+    val sizeBytes: Long = -1L,
+)
 
 @Serializable
 @SerialName("heartbeat")
@@ -30,7 +37,10 @@ data class PlayerNameMessage(val playerName: String) : GameMessage
 @SerialName("player_status")
 data class PlayerStatusMessage(
     val batteryLevel: Int,
-    val receivedVideos: List<String> = emptyList()
+    val receivedVideos: List<String> = emptyList(),
+    /** e.g. "anomaly3.mp4 47%", or null when nothing is downloading. Lets the host watch a
+     *  pre-load finish from its own screen rather than over adb. */
+    val downloading: String? = null,
 ) : GameMessage
 
 object MessageEnvelope {

@@ -246,4 +246,19 @@ class SerializationTest {
         val jsonString = bytes.drop(4).toByteArray().decodeToString()
         assertTrue("JSON should contain type discriminator", jsonString.contains("\"msg_type\":\"playback_command\""))
     }
+
+    @Test
+    fun `a playlist from an older build without sizes still decodes`() {
+        // Older builds emitted VideoDto with no sizeBytes. It must default to "unknown"
+        // rather than fail to parse, and unknown means "trust the cached file" — so upgrading
+        // never re-downloads a pre-load that already finished.
+        val legacy = """{"msg_type":"video_list","videos":[{"uriString":"content://a.mp4","title":"a.mp4"}]}"""
+
+        val decoded = MessageEnvelope.json.decodeFromString(GameMessage.serializer(), legacy)
+
+        val videos = (decoded as VideoListMessage).videos
+        assertEquals(1, videos.size)
+        assertEquals("a.mp4", videos[0].title)
+        assertEquals(-1L, videos[0].sizeBytes)
+    }
 }

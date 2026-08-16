@@ -58,4 +58,44 @@ class PasswordHasherTest {
         val hash = PasswordHasher.hash("password", "")
         assertEquals(64, hash.length)
     }
+
+    @Test
+    fun `hash and nonce are plain ASCII hex whatever the device locale is`() {
+        // These strings are compared byte-for-byte across phones — the host generates the
+        // nonce, a player hashes against it. The fleet is unknown devices with unknown locale
+        // settings, so formatting must not depend on the default locale.
+        val original = java.util.Locale.getDefault()
+        try {
+            for (locale in listOf(java.util.Locale("ar", "EG"), java.util.Locale.GERMANY,
+                                  java.util.Locale("hi", "IN"), java.util.Locale.ROOT)) {
+                java.util.Locale.setDefault(locale)
+
+                val hash = PasswordHasher.hash("secret", "n0nce")
+                val nonce = PasswordHasher.generateNonce()
+
+                assertTrue("hash must be ASCII hex under $locale, was $hash",
+                    hash.matches(Regex("[0-9a-f]{64}")))
+                assertTrue("nonce must be ASCII hex under $locale, was $nonce",
+                    nonce.matches(Regex("[0-9a-f]{64}")))
+            }
+        } finally {
+            java.util.Locale.setDefault(original)
+        }
+    }
+
+    @Test
+    fun `the same password and nonce hash identically across locales`() {
+        val original = java.util.Locale.getDefault()
+        try {
+            java.util.Locale.setDefault(java.util.Locale("ar", "EG"))
+            val fromArabicLocale = PasswordHasher.hash("secret", "n0nce")
+            java.util.Locale.setDefault(java.util.Locale.US)
+            val fromUsLocale = PasswordHasher.hash("secret", "n0nce")
+
+            assertEquals("a player must be able to authenticate against any host",
+                fromUsLocale, fromArabicLocale)
+        } finally {
+            java.util.Locale.setDefault(original)
+        }
+    }
 }

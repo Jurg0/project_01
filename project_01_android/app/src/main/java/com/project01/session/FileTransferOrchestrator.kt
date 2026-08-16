@@ -93,15 +93,39 @@ class FileTransferOrchestrator(
     ): List<Video> {
         return videos.map { video ->
             val localFile = File(filesDir, video.title)
-            if (localFile.exists()) {
-                received.add(video.title)
-                Video(Uri.fromFile(localFile), video.title)
-            } else {
-                enqueue(video.title, senderAddress)
-                video
+            when {
+                !localFile.exists() -> {
+                    enqueue(video.title, senderAddress)
+                    video
+                }
+                isComplete(localFile, video) -> {
+                    received.add(video.title)
+                    Video(Uri.fromFile(localFile), video.title, video.sizeBytes)
+                }
+                else -> {
+                    // Truncated — almost certainly written by a build that saved straight to
+                    // the destination, so a killed transfer left a stub that looked cached.
+                    Log.w(TAG, "${video.title}: cached ${localFile.length()}B but host says " +
+                        "${video.sizeBytes}B — discarding and fetching again")
+                    localFile.delete()
+                    received.remove(video.title)
+                    enqueue(video.title, senderAddress)
+                    video
+                }
             }
         }
     }
+
+    /**
+     * Whether a cached file can be trusted.
+     *
+     * An unknown expected size means "trust it": the host may be running a playlist prepared
+     * by an older build, and a pre-load that already finished must not be thrown away just
+     * because the size couldn't be measured. Only a size we actually know and that actually
+     * disagrees causes a re-fetch.
+     */
+    private fun isComplete(localFile: File, video: Video): Boolean =
+        video.sizeBytes <= 0 || localFile.length() == video.sizeBytes
 
     /**
      * Queue one file. The worker fetches queued files one at a time, in the order the

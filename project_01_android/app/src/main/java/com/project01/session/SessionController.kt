@@ -36,6 +36,8 @@ class SessionController(
     private val playbackController: PlaybackController,
     private val scope: CoroutineScope,
     private val videosProvider: () -> List<Video>?,
+    /** The playlist as it should go on the wire, with each video's real size resolved. */
+    private val playlistForWire: () -> List<VideoDto> = { videosProvider().orEmpty().map { v -> v.toDto() } },
     private val isWifiEnabled: () -> Boolean,
     private val openWifiSettings: () -> Unit,
     /** Ask the game master for its address over the LAN. Null if nothing answered. */
@@ -306,7 +308,7 @@ class SessionController(
     private suspend fun pushInitialStateTo(address: String) {
         val currentVideos = videosProvider().orEmpty()
         if (currentVideos.isNotEmpty()) {
-            gameSync.sendTo(address, VideoListMessage(currentVideos.map { it.toDto() }))
+            gameSync.sendTo(address, VideoListMessage(playlistForWire()))
         }
         val current = playbackController.currentIntent()
         gameSync.sendTo(

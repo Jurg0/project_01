@@ -174,18 +174,26 @@ class MainActivity : AppCompatActivity() {
             .setNegativeButton("Close", null)
             .show()
 
-        lifecycleScope.launch {
-            val report = try {
-                gameViewModel.collectDiagnostics().format()
-            } catch (e: Exception) {
-                "Diagnostics failed: ${e.javaClass.simpleName}: ${e.message}"
+        // Refresh while open, so this is a live view rather than a snapshot to reopen over and
+        // over. A pre-load of several large videos takes many minutes; watching the host's
+        // player-readiness counts climb here is meant to replace attaching adb to each phone.
+        var latest = ""
+        val refresher = lifecycleScope.launch {
+            while (true) {
+                latest = try {
+                    gameViewModel.collectDiagnostics().format()
+                } catch (e: Exception) {
+                    "Diagnostics failed: ${e.javaClass.simpleName}: ${e.message}"
+                }
+                output.text = latest
+                kotlinx.coroutines.delay(DIAGNOSTICS_REFRESH_MS)
             }
-            output.text = report
-            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val clipboard = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("diagnostics", report))
-                Toast.makeText(this@MainActivity, "Copied", Toast.LENGTH_SHORT).show()
-            }
+        }
+        dialog.setOnDismissListener { refresher.cancel() }
+        dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val clipboard = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("diagnostics", latest))
+            Toast.makeText(this@MainActivity, "Copied", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -602,5 +610,10 @@ class MainActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         playbackView.onPause()
+    }
+
+    private companion object {
+        /** Fast enough to watch a transfer move, slow enough not to churn the socket probes. */
+        const val DIAGNOSTICS_REFRESH_MS = 2_000L
     }
 }

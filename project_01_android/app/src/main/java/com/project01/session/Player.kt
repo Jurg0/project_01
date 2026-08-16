@@ -11,5 +11,7 @@ data class Player(
     val isGameMaster: Boolean,
     val batteryLevel: Int = -1,
     val readyVideoCount: Int = 0,
-    val totalVideoCount: Int = 0
+    val totalVideoCount: Int = 0,
+    /** What this player is downloading right now, or null. Host-side view only. */
+    val downloading: String? = null,
 ) : Parcelable

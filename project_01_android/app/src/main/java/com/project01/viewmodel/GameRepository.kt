@@ -223,11 +223,26 @@ class GameRepository(
         }.launchIn(coroutineScope)
     }
 
+    /**
+     * What this device is downloading right now, e.g. "anomaly3.mp4 47%", or null when idle.
+     * Read by the diagnostics screen so a long pre-load can be watched on the phone itself
+     * instead of over adb.
+     */
+    @Volatile
+    var activeDownload: String? = null
+        private set
+
     private fun observeFileTransferEvents() {
         fileTransfer.events.onEach { event ->
             // Drive the lossless swap first so no Success is ever dropped, THEN post
             // to the coalescing LiveData that only feeds cosmetic progress/toasts.
             if (event is FileTransferEvent.Success) onFileReceived?.invoke(event.fileName)
+            activeDownload = when (event) {
+                is FileTransferEvent.Progress -> "${event.fileName} ${event.progress}%"
+                is FileTransferEvent.Success, is FileTransferEvent.Failure,
+                is FileTransferEvent.ChecksumFailed -> null
+                else -> activeDownload
+            }
             _fileTransferEvent.postValue(event)
         }.launchIn(coroutineScope)
     }
@@ -248,6 +263,24 @@ class GameRepository(
 
     fun showToast(message: String) {
         _toastMessage.postValue(message)
+    }
+
+    /** Size of a local content:// file in bytes, or [Video.SIZE_UNKNOWN] if it can't be read. */
+    fun getFileSize(uri: Uri): Long {
+        try {
+            application.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use {
+                if (it.moveToFirst()) {
+                    val sizeIndex = it.getColumnIndex(OpenableColumns.SIZE)
+                    if (sizeIndex != -1 && !it.isNull(sizeIndex)) return it.getLong(sizeIndex)
+                }
+            }
+            application.contentResolver.openFileDescriptor(uri, "r")?.use { fd ->
+                if (fd.statSize > 0) return fd.statSize
+            }
+        } catch (e: Exception) {
+            android.util.Log.w(TAG, "could not size $uri", e)
+        }
+        return Video.SIZE_UNKNOWN
     }
 
     fun getFileName(uri: Uri): String? {

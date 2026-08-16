@@ -69,6 +69,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         playbackController = playbackController,
         scope = viewModelScope,
         videosProvider = { videos.value },
+        playlistForWire = { playlistForWire(videos.value ?: emptyList()) },
         isWifiEnabled = { repository.isWifiEnabled() },
         openWifiSettings = { repository.openWifiSettings() },
         discoverHost = { repository.discoverHost() },
@@ -126,7 +127,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
             repository.restoreVideos(loaded)
             repository.playlistStore.savePlaylist(PlaylistStore.LAST_USED_NAME, loaded)
             if (isGameMaster()) {
-                repository.gameSync.broadcast(VideoListMessage(loaded.map { it.toDto() }))
+                repository.gameSync.broadcast(VideoListMessage(playlistForWire(loaded)))
             }
         }
     }
@@ -135,6 +136,18 @@ class GameViewModel(application: Application, val repository: GameRepository = G
 
     fun deleteSavedPlaylist(name: String) {
         repository.playlistStore.deletePlaylist(name)
+    }
+
+    /**
+     * The playlist as it goes on the wire, with each video's real size filled in.
+     *
+     * Measured here rather than when the playlist was built, so games prepared by an older
+     * build (which stored no size) still publish one — that is what lets a player detect a
+     * video left truncated by an earlier version and fetch it again.
+     */
+    private fun playlistForWire(videos: List<Video>): List<VideoDto> = videos.map { video ->
+        if (video.sizeBytes > 0) video.toDto()
+        else video.toDto().copy(sizeBytes = repository.getFileSize(video.uri))
     }
 
     /** Wired into SessionController via the onSessionStarted callback. */
@@ -267,7 +280,8 @@ class GameViewModel(application: Application, val repository: GameRepository = G
                 currentPlayers[index] = existing.copy(
                     batteryLevel = status.batteryLevel,
                     readyVideoCount = status.receivedVideos.size,
-                    totalVideoCount = totalVideos
+                    totalVideoCount = totalVideos,
+                    downloading = status.downloading,
                 )
                 repository.updatePlayers(currentPlayers)
             }
@@ -292,7 +306,8 @@ class GameViewModel(application: Application, val repository: GameRepository = G
                     repository.gameSync.broadcast(
                         PlayerStatusMessage(
                             batteryLevel = getBatteryLevel(),
-                            receivedVideos = fileTransferOrchestrator.receivedVideoFiles.toList()
+                            receivedVideos = fileTransferOrchestrator.receivedVideoFiles.toList(),
+                            downloading = repository.activeDownload,
                         )
                     )
                 }
@@ -402,11 +417,15 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         return repository.collectDiagnostics(
             role = if (isGameMaster()) "game master" else "player",
             connectionState = connectionState.value?.name ?: "none",
-            playlistSummary = "${videos.size} video(s), $local on this device",
+            playlistSummary = "${videos.size} video(s), $local on this device" +
+                (repository.activeDownload?.let { ", downloading $it" } ?: ""),
             hosting = sessionController.hostingState(),
             players = repository.currentPlayers.map { player ->
-                "${player.name} — ${player.readyVideoCount}/${player.totalVideoCount} videos" +
-                    if (player.batteryLevel >= 0) ", battery ${player.batteryLevel}%" else ""
+                buildString {
+                    append("${player.name} — ${player.readyVideoCount}/${player.totalVideoCount} videos")
+                    player.downloading?.let { append(", downloading $it") }
+                    if (player.batteryLevel >= 0) append(", battery ${player.batteryLevel}%")
+                }
             },
         )
     }
@@ -425,7 +444,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     private suspend fun applyLocalVideoChange(newList: List<Video>) {
         repository.restoreVideos(newList)
         repository.playlistStore.savePlaylist(PlaylistStore.LAST_USED_NAME, newList)
-        repository.gameSync.broadcast(VideoListMessage(newList.map { it.toDto() }))
+        repository.gameSync.broadcast(VideoListMessage(playlistForWire(newList)))
     }
 
     fun turnOffScreen() {

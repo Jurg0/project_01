@@ -48,8 +48,18 @@ in playlist order**, so a partly-finished pre-load still leaves the early videos
 Videos are cached permanently on each player, so large playlists can be synced ahead of time:
 
 1. Start the game as usual and let every player join.
-2. Leave them connected until the host's diagnostics shows every player at `N/N videos`.
-   Watch `adb logcat -s FileTransfer:D` on a player if you want live progress.
+2. Leave them connected and open **Diagnostics on the host** (hold the bottom-left corner).
+   It refreshes itself, so you can leave it open and watch each player until they all read
+   `N/N videos`:
+
+   ```
+   player readiness:
+     A20e — 3/5 videos, downloading anomaly4.mp4 62%, battery 74%
+     S9   — 5/5 videos, battery 81%
+   ```
+
+   No adb needed. (`adb logcat -s FileTransfer:D` on a player still gives byte-level detail
+   if you want it, but one device at a time — see below.)
 3. End the game and hand the phones out. **The video files stay on the players.**
 4. When the real game starts, players re-join and already-cached videos are reused — only
    genuinely missing ones transfer again.

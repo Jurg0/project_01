@@ -106,7 +106,7 @@ class FileTransfer {
                             throw IOException("could not move $partFile into place")
                         }
                         val seconds = (System.currentTimeMillis() - startedAt) / 1000.0
-                        Log.d(TAG, "$videoTitle: complete, ${fileSize / 1024 / 1024}MB in ${"%.1f".format(seconds)}s")
+                        Log.d(TAG, "$videoTitle: complete, ${fileSize / 1024 / 1024}MB in ${String.format(java.util.Locale.ROOT, "%.1f", seconds)}s")
                     }
                 }
             } catch (e: Exception) {
@@ -203,7 +203,7 @@ class FileTransfer {
                     }
                     output.flush()
                     val seconds = (System.currentTimeMillis() - startedAt) / 1000.0
-                    Log.d(TAG, "sent $title to $host in ${"%.1f".format(seconds)}s")
+                    Log.d(TAG, "sent $title to $host in ${String.format(java.util.Locale.ROOT, "%.1f", seconds)}s")
                 } ?: throw IOException("Could not open input stream for URI: $uri")
             }
         }

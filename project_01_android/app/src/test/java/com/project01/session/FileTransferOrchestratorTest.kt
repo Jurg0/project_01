@@ -340,4 +340,61 @@ class FileTransferOrchestratorTest {
         assertEquals("one request, not two", 1, captureBroadcasts.size)
         inFlight.complete(Unit)
     }
+
+    // --- Cached files are verified against the size the host reports ---
+
+    @Test
+    fun `a truncated cached file is discarded and fetched again`() = runTest(dispatcher) {
+        // Files stranded by an older build wrote straight to the destination, so a killed
+        // transfer left a stub that exists() accepted as cached forever.
+        isGameMaster = false
+        File(tmpDir, "big.mp4").writeText("only-a-stub")     // 11 bytes
+        val orchestrator = newOrchestrator()
+        val incoming = listOf(Video(Uri.parse("content://gm/big.mp4"), "big.mp4", sizeBytes = 200_000_000L))
+
+        val resolved = orchestrator.resolveAndRequestMissing(incoming, senderAddress = "gm")
+        advanceUntilIdle()
+
+        assertFalse("the stub must be gone", File(tmpDir, "big.mp4").exists())
+        assertFalse(orchestrator.receivedVideoFiles.contains("big.mp4"))
+        assertEquals("and it must be re-requested", 1, captureBroadcasts.size)
+        assertEquals(incoming[0].uri, resolved[0].uri)       // still the host's URI for now
+    }
+
+    @Test
+    fun `a complete cached file is kept and never re-fetched`() = runTest(dispatcher) {
+        isGameMaster = false
+        val content = "the-whole-video"
+        File(tmpDir, "good.mp4").writeText(content)
+        val orchestrator = newOrchestrator()
+        val incoming = listOf(
+            Video(Uri.parse("content://gm/good.mp4"), "good.mp4", sizeBytes = content.length.toLong())
+        )
+
+        val resolved = orchestrator.resolveAndRequestMissing(incoming, senderAddress = "gm")
+        advanceUntilIdle()
+
+        assertEquals(Uri.fromFile(File(tmpDir, "good.mp4")), resolved[0].uri)
+        assertTrue(orchestrator.receivedVideoFiles.contains("good.mp4"))
+        assertTrue("no transfer for a verified file", captureBroadcasts.isEmpty())
+    }
+
+    @Test
+    fun `an unknown size never invalidates a finished pre-load`() = runTest(dispatcher) {
+        // A host still running a playlist prepared by an older build reports no size. Treating
+        // that as a mismatch would re-download every video a pre-load had already synced.
+        isGameMaster = false
+        File(tmpDir, "cached.mp4").writeText("already-here")
+        val orchestrator = newOrchestrator()
+        val incoming = listOf(
+            Video(Uri.parse("content://gm/cached.mp4"), "cached.mp4", sizeBytes = Video.SIZE_UNKNOWN)
+        )
+
+        val resolved = orchestrator.resolveAndRequestMissing(incoming, senderAddress = "gm")
+        advanceUntilIdle()
+
+        assertEquals(Uri.fromFile(File(tmpDir, "cached.mp4")), resolved[0].uri)
+        assertTrue(File(tmpDir, "cached.mp4").exists())
+        assertTrue("nothing may be re-fetched", captureBroadcasts.isEmpty())
+    }
 }

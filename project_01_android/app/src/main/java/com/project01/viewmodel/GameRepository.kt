@@ -88,9 +88,10 @@ class GameRepository(
     /**
      * The game host's IP, or null if this device isn't on the game's network.
      *
-     * The game master hosts the hotspot every device is already connected to, so the GM is
-     * this network's gateway — no discovery protocol needed. Three sources are tried in
-     * order because the fleet spans many Android versions (minSdk 24):
+     * FALLBACK ONLY — [HostDiscovery] asking the host directly is the primary path, because
+     * every derivation below encodes an assumption about how the hosting phone configures its
+     * hotspot, and that varies by device and Android version. Sources are tried in order
+     * because the fleet spans many Android versions (minSdk 24):
      *  1. `dhcpServerAddress` — API 30+ only (the A20e is exactly API 30); the most precise,
      *     since for a hotspot the DHCP server *is* the access point.
      *  2. the default route's gateway — available on every supported version.
@@ -272,6 +273,88 @@ class GameRepository(
     /** Player side: ask the game master for its address. Null if nothing answered. */
     suspend fun discoverHost(): String? = hostDiscovery.findHost()
 
+    /**
+     * Gather a self-describing network report. Every step is individually guarded: this runs
+     * on phones we have never tested (the real game master is a device we can't obtain), so a
+     * diagnostics screen that crashes is worse than useless.
+     */
+    suspend fun collectDiagnostics(
+        role: String,
+        connectionState: String,
+        playlistSummary: String,
+        hosting: HostingState?,
+    ): DiagnosticsReport = withContext(Dispatchers.IO) {
+        val interfaces = try {
+            java.net.NetworkInterface.getNetworkInterfaces().toList()
+                .filter { it.isUp && !it.isLoopback }
+                .map { nif ->
+                    val addresses = nif.inetAddresses.toList().joinToString(", ") { addr ->
+                        addr.hostAddress ?: "?"
+                    }
+                    "${nif.name}: ${addresses.ifEmpty { "(no address)" }}"
+                }
+        } catch (e: Exception) {
+            listOf("error: ${e.javaClass.simpleName}")
+        }
+
+        val gateways = try {
+            val lp = wifiNetwork()?.let { connectivityManager.getLinkProperties(it) }
+            buildList {
+                lp?.routes?.forEach { route ->
+                    val gw = route.gateway?.hostAddress
+                    if (gw != null) add("$gw${if (route.isDefaultRoute) " (default)" else ""}")
+                }
+                if (android.os.Build.VERSION.SDK_INT >= 30) {
+                    lp?.dhcpServerAddress?.hostAddress?.let { add("$it (dhcp server)") }
+                }
+            }
+        } catch (e: Exception) {
+            listOf("error: ${e.javaClass.simpleName}")
+        }
+
+        // The host doesn't look for itself: probing and dialling would only time out and make
+        // the report slow, and its own section reports what actually matters instead.
+        val isHost = hosting != null
+        val derived = if (isHost) null else try { resolveHostAddress() } catch (e: Exception) { null }
+        val discovered = if (isHost) null else try { hostDiscovery.findHost() } catch (e: Exception) { null }
+
+        val target = discovered ?: derived
+        val reachability = when {
+            isHost -> null
+            target == null -> "no address to test"
+            else -> try {
+                java.net.Socket().use { socket ->
+                    socket.connect(
+                        java.net.InetSocketAddress(target, DiagnosticsReport.GAME_PORT),
+                        REACHABILITY_TIMEOUT_MS,
+                    )
+                    "reachable at $target"
+                }
+            } catch (e: Exception) {
+                "FAILED to $target — ${e.javaClass.simpleName}: ${e.message}"
+            }
+        }
+
+        DiagnosticsReport(
+            deviceModel = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}",
+            androidRelease = android.os.Build.VERSION.RELEASE ?: "?",
+            apiLevel = android.os.Build.VERSION.SDK_INT,
+            appVersion = try {
+                application.packageManager.getPackageInfo(application.packageName, 0).versionName ?: "?"
+            } catch (e: Exception) { "?" },
+            role = role,
+            connectionState = connectionState,
+            wifiEnabled = try { isWifiEnabled() } catch (e: Exception) { false },
+            interfaces = interfaces,
+            gatewayCandidates = gateways,
+            derivedHost = derived,
+            discoveredHost = discovered,
+            hostReachable = reachability,
+            playlistSummary = playlistSummary,
+            hosting = hosting,
+        )
+    }
+
     fun shutdown() {
         coroutineScope.cancel()
         hostDiscovery.stopResponding()
@@ -282,6 +365,7 @@ class GameRepository(
     companion object {
         /** Logcat tag for host-address resolution: `adb logcat -s GameNet`. */
         private const val TAG = "GameNet"
+        private const val REACHABILITY_TIMEOUT_MS = 3_000
     }
 }
 

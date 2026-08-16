@@ -35,6 +35,10 @@ class GameSync(private val networkManager: NetworkManager) {
         return networkManager.consumeNonce(address)
     }
 
+    fun isServerRunning(): Boolean = networkManager.isServerRunning()
+
+    fun connectedClientCount(): Int = networkManager.connectedClientCount()
+
     fun disconnectClient(address: String) {
         networkManager.disconnectClient(address)
     }

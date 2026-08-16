@@ -14,6 +14,12 @@ import com.project01.databinding.ActivityMainBinding
  *    no time pressure; long-press avoids accidental opens while handling the phone.
  *  - CREATE  = double-tap top-right ([ActivityMainBinding.createHotspot]) — on-site; a
  *    double-tap in a corner can't be triggered by a stray single touch.
+ *  - DIAGNOSTICS = long-press bottom-left ([ActivityMainBinding.diagnosticsHotspot]).
+ *
+ * Diagnostics deliberately does NOT share the CREATE corner. GestureDetector arms its
+ * long-press timer on ACTION_DOWN, so a first tap held past ~500ms would fire long-press
+ * instead of completing the double-tap — putting a page of technical text on screen in front
+ * of the players at the exact moment the game master is trying to start the game unnoticed.
  *
  * The hotspots are only VISIBLE on the start screen (gated in MainActivity.showStartScreen);
  * a GONE view receives no touches, so they can't fire in-game or in prepare mode.
@@ -23,6 +29,7 @@ class StartScreenControlsDelegate(
     private val binding: ActivityMainBinding,
     private val onCreateRequested: () -> Unit,
     private val onPrepareRequested: () -> Unit,
+    private val onDiagnosticsRequested: () -> Unit = {},
 ) {
     fun bind() {
         val createDetector = GestureDetector(activity, object : GestureDetector.SimpleOnGestureListener() {
@@ -43,6 +50,16 @@ class StartScreenControlsDelegate(
         })
         binding.prepareHotspot.setOnTouchListener { _, event ->
             prepareDetector.onTouchEvent(event)
+            true
+        }
+
+        val diagnosticsDetector = GestureDetector(activity, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onLongPress(e: MotionEvent) {
+                onDiagnosticsRequested()
+            }
+        })
+        binding.diagnosticsHotspot.setOnTouchListener { _, event ->
+            diagnosticsDetector.onTouchEvent(event)
             true
         }
     }

@@ -259,6 +259,17 @@
         android:background="@android:color/transparent"
         android:importantForAccessibility="no" />
 
+    <!-- Diagnostics: long-press bottom-left. Deliberately a different corner from CREATE:
+         sharing that corner meant a first tap held past the 500ms long-press timeout would
+         open a wall of technical text in front of the players instead of starting the game. -->
+    <View
+        android:id="@+id/diagnostics_hotspot"
+        android:layout_width="40mm"
+        android:layout_height="40mm"
+        android:layout_gravity="bottom|start"
+        android:background="@android:color/transparent"
+        android:importantForAccessibility="no" />
+
     <!-- Game master controls overlay: undercover by design.
          Three minimal buttons (Prev / Play-Next / Light), revealed by double-tap on
          invisible_resume_button. End Game lives on a long-press of the same target. -->

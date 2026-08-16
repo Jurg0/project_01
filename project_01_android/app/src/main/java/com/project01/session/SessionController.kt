@@ -20,11 +20,10 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * **Networking model:** everyone is on one ordinary Wi-Fi LAN — the game master hosts a
  * mobile hotspot that the player devices join *before* the game starts. The GM therefore
- * only starts a TCP server, and a player only has to resolve the GM's address (the
- * network gateway, via [resolveHostAddress]) and dial it. This replaced a Wi-Fi Direct
- * implementation where the GM's autonomous group owner proved undiscoverable to older
- * phones — service discovery succeeded on every call yet never returned a single response
- * (field-verified on a Samsung A20e joining a Samsung S23).
+ * only starts a TCP server; a player finds it by asking (see [discoverHost]) and dials it,
+ * falling back to deriving an address from the link only if nothing answers. This replaced a
+ * Wi-Fi Direct implementation whose autonomous group owner proved undiscoverable to older
+ * phones, and then a derive-only approach that broke differently on each device.
  *
  * The role bit (`player.isGameMaster`) lives here: set in [createGame] / [connectToHost]
  * and cleared on game end. Other controllers (PlaybackController,
@@ -81,6 +80,9 @@ class SessionController(
      *  follows the GM's kick returns us to the start screen instead of reconnecting. */
     private var pendingAuthRejected = false
 
+    /** Mirrors setDiscoveryResponder so diagnostics can report it on the host. */
+    private var answeringProbes = false
+
     init {
         observeReconnectionState()
     }
@@ -134,6 +136,21 @@ class SessionController(
      */
     private fun localPlayer(name: String, isGameMaster: Boolean) =
         Player(WifiP2pDevice().apply { deviceName = name }, name, isGameMaster)
+
+    /**
+     * Host-side diagnostics, or null when this device isn't hosting. The real game master is
+     * a phone we can't attach a debugger to, so this is the only way to see whether it is
+     * actually reachable.
+     */
+    fun hostingState(): HostingState? {
+        if (!isGameMaster()) return null
+        return HostingState(
+            serverRunning = gameSync.isServerRunning(),
+            answeringProbes = answeringProbes,
+            connectedClients = gameSync.connectedClientCount(),
+            authenticatedClients = authenticatedClients.size,
+        )
+    }
 
     /** Called from GameViewModel's NetworkEvent.ClientConnected branch. */
     fun handleClientConnected(address: String) {
@@ -315,6 +332,7 @@ class SessionController(
         gameSync.startServer()
         // Answer discovery probes so joiners can find us without deriving our address.
         setDiscoveryResponder(true)
+        answeringProbes = true
         _connectionState.postValue(ConnectionStatus.HOST)
         onSessionStarted(true)
     }
@@ -334,6 +352,7 @@ class SessionController(
     fun endGame() {
         isEndingGame = true
         setDiscoveryResponder(false)   // stop answering probes for a game that's ending
+        answeringProbes = false
         authTimeouts.values.forEach { it.cancel() }
         authTimeouts.clear()
         authenticatedClients.clear()

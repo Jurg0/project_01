@@ -226,6 +226,10 @@ class SocketNetworkManager(val port: Int = 8888) : NetworkManager {
         }
     }
 
+    override fun isServerRunning(): Boolean = isServer
+
+    override fun connectedClientCount(): Int = clients.size
+
     override fun consumeNonce(address: String): String? {
         return clientNonces.remove(address)
     }

@@ -89,6 +89,7 @@ class MainActivity : AppCompatActivity() {
             binding = binding,
             onCreateRequested = { onCreateRequested() },
             onPrepareRequested = { onPrepareRequested() },
+            onDiagnosticsRequested = { showDiagnosticsDialog() },
         )
         startScreenControls.bind()
 
@@ -148,6 +149,43 @@ class MainActivity : AppCompatActivity() {
         PasswordPromptDialogFragment { password ->
             gameViewModel.createGameForPassword(password)
         }.show(supportFragmentManager, "CreateDialog")
+    }
+
+    /**
+     * DIAGNOSTICS (long-press bottom-left): show what this device sees on the network.
+     *
+     * The fleet is open-ended and the real game master is a phone we can't test beforehand,
+     * so the app has to explain its own failures on site. The text is selectable and can be
+     * copied, which turns "it wouldn't join" into a report a tester can send back without adb.
+     */
+    private fun showDiagnosticsDialog() {
+        val output = android.widget.TextView(this).apply {
+            text = "Collecting…"
+            setTextIsSelectable(true)
+            typeface = android.graphics.Typeface.MONOSPACE
+            textSize = 11f
+            setPadding(48, 32, 48, 32)
+        }
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Diagnostics")
+            .setView(android.widget.ScrollView(this).apply { addView(output) })
+            .setPositiveButton("Copy", null)   // set below so it doesn't dismiss
+            .setNegativeButton("Close", null)
+            .show()
+
+        lifecycleScope.launch {
+            val report = try {
+                gameViewModel.collectDiagnostics().format()
+            } catch (e: Exception) {
+                "Diagnostics failed: ${e.javaClass.simpleName}: ${e.message}"
+            }
+            output.text = report
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val clipboard = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("diagnostics", report))
+                Toast.makeText(this@MainActivity, "Copied", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     /** PREPARE (long-press top-left): manage prepared (playlist + password) pairs. */
@@ -454,6 +492,7 @@ class MainActivity : AppCompatActivity() {
         // Undercover GM affordances live only here.
         binding.prepareHotspot.visibility = View.VISIBLE
         binding.createHotspot.visibility = View.VISIBLE
+        binding.diagnosticsHotspot.visibility = View.VISIBLE
         binding.playerView.useController = false
         gmControls.hideOverlay()
         lightsAndScreen.resetToLobbyDefaults()
@@ -493,6 +532,7 @@ class MainActivity : AppCompatActivity() {
         // Hotspots off in prepare mode so a corner tap can't re-trigger create/prepare.
         binding.prepareHotspot.visibility = View.GONE
         binding.createHotspot.visibility = View.GONE
+        binding.diagnosticsHotspot.visibility = View.GONE
         binding.playerView.useController = false
         gmControls.hideOverlay()
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -529,6 +569,7 @@ class MainActivity : AppCompatActivity() {
         // would otherwise pop the create dialog mid-game).
         binding.prepareHotspot.visibility = View.GONE
         binding.createHotspot.visibility = View.GONE
+        binding.diagnosticsHotspot.visibility = View.GONE
         binding.playerView.announceForAccessibility("Game started. Video player is active.")
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 

@@ -385,6 +385,21 @@ class GameViewModel(application: Application, val repository: GameRepository = G
 
     fun setPrepareMode(on: Boolean) { _prepareMode.value = on }
 
+    /**
+     * Build the on-device diagnostics report. On the game master this reports whether players
+     * can reach *it*; on a player, whether it can find the host.
+     */
+    suspend fun collectDiagnostics(): DiagnosticsReport {
+        val videos = videos.value ?: emptyList()
+        val local = videos.count { it.uri.scheme == "file" }
+        return repository.collectDiagnostics(
+            role = if (isGameMaster()) "game master" else "player",
+            connectionState = connectionState.value?.name ?: "none",
+            playlistSummary = "${videos.size} video(s), $local on this device",
+            hosting = sessionController.hostingState(),
+        )
+    }
+
     fun addVideo(uri: Uri) {
         viewModelScope.launch {
             val fileName = repository.getFileName(uri) ?: "Video ${videos.value?.size?.plus(1)}"

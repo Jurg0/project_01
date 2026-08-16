@@ -81,6 +81,32 @@ class DiagnosticsReportTest {
     }
 
     @Test
+    fun `game master report shows which videos each player has`() {
+        // Field failure: a 200MB video played only on the host while the players sat on a
+        // stale frame. The reason was in the roster all along — the players hadn't finished
+        // receiving it — but nothing surfaced it, so the host had no way to tell.
+        val text = report().copy(
+            role = "game master",
+            hosting = HostingState(true, true, 2, 2),
+            players = listOf("A20e — 2/3 videos, battery 74%", "S9 — 3/3 videos"),
+        ).format()
+
+        assertTrue(text.contains("player readiness:"))
+        assertTrue(text.contains("A20e — 2/3 videos"))
+        assertTrue(text.contains("S9 — 3/3 videos"))
+    }
+
+    @Test
+    fun `game master report is explicit when no players are in the roster`() {
+        val text = report().copy(
+            role = "game master",
+            hosting = HostingState(true, true, 0, 0),
+            players = emptyList(),
+        ).format()
+        assertTrue(text.contains("no players in the roster"))
+    }
+
+    @Test
     fun `game master report shouts when it is not actually serving`() {
         val text = report().copy(
             role = "game master",

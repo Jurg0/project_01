@@ -150,7 +150,36 @@ class FileTransferTest {
         file.delete()
     }
 
-    private companion object {
+    @Test
+    fun `an interrupted transfer leaves no file that a later run would treat as cached`() = runBlocking<Unit> {
+        // The pre-load workflow deliberately disconnects phones, so large transfers WILL be
+        // interrupted. Writing straight to the destination left a partial file behind, and
+        // resolveAndRequestMissing only checks exists() — so the stub was accepted as cached
+        // and the video stayed unplayable forever, with no attempt to fetch it again.
+        val fileTransfer = FileTransfer()
+        val outputFile = File.createTempFile("interrupted", ".bin")
+        outputFile.delete()   // nothing cached yet
+        val port = findFreePort()
+
+        val receiver = launch(Dispatchers.IO) { fileTransfer.startReceiving(port, outputFile) }
+        delay(GRACE_MS)
+
+        // Connect, promise a big file, send a little, then hang up.
+        java.net.Socket("localhost", port).use { socket ->
+            val out = java.io.DataOutputStream(socket.getOutputStream())
+            out.writeLong(50_000_000L)          // claim 50MB
+            out.write(ByteArray(32))            // checksum placeholder
+            out.write(ByteArray(1024))          // ...then deliver almost nothing
+            out.flush()
+        }
+        withTimeout(TRANSFER_TIMEOUT_MS) { receiver.join() }
+
+        assertFalse("a partial download must not look like a cached file", outputFile.exists())
+        assertFalse("and no .part leftovers either",
+            File(outputFile.parentFile, outputFile.name + ".part").exists())
+    }
+
+    private companion object  {
         /** Real time, so a slow CI runner still wins the socket/subscription races. */
         const val GRACE_MS = 300L
         const val TRANSFER_TIMEOUT_MS = 60_000L

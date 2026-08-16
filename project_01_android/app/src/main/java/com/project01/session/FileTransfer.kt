@@ -45,42 +45,75 @@ class FileTransfer {
     private suspend fun receiveOrThrow(port: Int, outputFile: File) {
         withContext(Dispatchers.IO) {
             val videoTitle = outputFile.name
-            ServerSocket(port).use { serverSocket ->
-                serverSocket.soTimeout = ACCEPT_TIMEOUT_MS
-                serverSocket.accept().use { clientSocket ->
-                    clientSocket.soTimeout = READ_TIMEOUT_MS
-                    val input = DataInputStream(clientSocket.getInputStream())
+            // Download to a .part file and only rename once the checksum verifies, so a
+            // finished file on disk always means a COMPLETE, verified file. Writing straight
+            // to outputFile meant an interrupted transfer left a stub that
+            // resolveAndRequestMissing then accepted as cached — the video would be
+            // permanently unplayable on that device and never re-fetched. That matters most
+            // for the pre-load workflow, where phones are deliberately disconnected and large
+            // files are very likely to be mid-transfer.
+            val partFile = File(outputFile.parentFile, "${outputFile.name}$PART_SUFFIX")
+            Log.d(TAG, "receiving $videoTitle on port $port")
+            val startedAt = System.currentTimeMillis()
+            try {
+                ServerSocket(port).use { serverSocket ->
+                    serverSocket.soTimeout = ACCEPT_TIMEOUT_MS
+                    serverSocket.accept().use { clientSocket ->
+                        clientSocket.soTimeout = READ_TIMEOUT_MS
+                        val input = DataInputStream(clientSocket.getInputStream())
 
-                    val fileSize = input.readLong()
-                    val checksum = ByteArray(CHECKSUM_SIZE)
-                    input.readFully(checksum)
+                        val fileSize = input.readLong()
+                        val checksum = ByteArray(CHECKSUM_SIZE)
+                        input.readFully(checksum)
+                        Log.d(TAG, "$videoTitle: ${fileSize / 1024 / 1024}MB incoming")
 
-                    val digest = MessageDigest.getInstance("SHA-256")
-                    val buffer = ByteArray(BUFFER_SIZE)
-                    var totalBytesRead = 0L
+                        val digest = MessageDigest.getInstance("SHA-256")
+                        val buffer = ByteArray(BUFFER_SIZE)
+                        var totalBytesRead = 0L
+                        var loggedDecile = -1
 
-                    FileOutputStream(outputFile).use { fileOutputStream ->
-                        while (totalBytesRead < fileSize) {
-                            val toRead = minOf(buffer.size.toLong(), fileSize - totalBytesRead).toInt()
-                            val bytesRead = input.read(buffer, 0, toRead)
-                            if (bytesRead == -1) {
-                                // Truncated: the old code broke out and let the checksum fail,
-                                // which reported a corrupt file instead of a retryable one.
-                                throw IOException("stream ended after $totalBytesRead of $fileSize bytes")
+                        FileOutputStream(partFile).use { fileOutputStream ->
+                            while (totalBytesRead < fileSize) {
+                                val toRead = minOf(buffer.size.toLong(), fileSize - totalBytesRead).toInt()
+                                val bytesRead = input.read(buffer, 0, toRead)
+                                if (bytesRead == -1) {
+                                    // Truncated: the old code broke out and let the checksum fail,
+                                    // which reported a corrupt file instead of a retryable one.
+                                    throw IOException("stream ended after $totalBytesRead of $fileSize bytes")
+                                }
+                                fileOutputStream.write(buffer, 0, bytesRead)
+                                digest.update(buffer, 0, bytesRead)
+                                totalBytesRead += bytesRead
+                                val progress = ((totalBytesRead * 100) / fileSize).toInt()
+                                // Log every 10% — a 400MB file is ~6000 buffers, far too many
+                                // to log individually, but silence is what made a stalled
+                                // transfer impossible to tell from a slow one.
+                                if (progress / 10 > loggedDecile) {
+                                    loggedDecile = progress / 10
+                                    Log.d(TAG, "$videoTitle: $progress% (${totalBytesRead / 1024 / 1024}MB)")
+                                }
+                                _events.emit(FileTransferEvent.Progress(videoTitle, progress))
                             }
-                            fileOutputStream.write(buffer, 0, bytesRead)
-                            digest.update(buffer, 0, bytesRead)
-                            totalBytesRead += bytesRead
-                            val progress = ((totalBytesRead * 100) / fileSize).toInt()
-                            _events.emit(FileTransferEvent.Progress(videoTitle, progress))
                         }
-                    }
 
-                    if (!digest.digest().contentEquals(checksum)) {
-                        outputFile.delete()
-                        throw ChecksumMismatchException(videoTitle)
+                        if (!digest.digest().contentEquals(checksum)) {
+                            partFile.delete()
+                            Log.w(TAG, "$videoTitle: checksum mismatch, discarded")
+                            throw ChecksumMismatchException(videoTitle)
+                        }
+                        outputFile.delete()   // replace any older copy
+                        if (!partFile.renameTo(outputFile)) {
+                            throw IOException("could not move $partFile into place")
+                        }
+                        val seconds = (System.currentTimeMillis() - startedAt) / 1000.0
+                        Log.d(TAG, "$videoTitle: complete, ${fileSize / 1024 / 1024}MB in ${"%.1f".format(seconds)}s")
                     }
                 }
+            } catch (e: Exception) {
+                // Never leave a stub behind that a later run would mistake for a cached file.
+                partFile.delete()
+                Log.w(TAG, "$videoTitle: receive failed — ${e.javaClass.simpleName}: ${e.message}")
+                throw e
             }
         }
     }
@@ -152,6 +185,9 @@ class FileTransfer {
                     ?: throw IOException("Could not determine file size for URI: $uri")
             }
 
+            val title = uri.lastPathSegment ?: "unknown_file"
+            Log.d(TAG, "sending $title (${fileSize / 1024 / 1024}MB) to $host:$port")
+            val startedAt = System.currentTimeMillis()
             Socket().use { socket ->
                 socket.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
                 socket.soTimeout = READ_TIMEOUT_MS
@@ -166,6 +202,8 @@ class FileTransfer {
                         output.write(buffer, 0, bytesRead)
                     }
                     output.flush()
+                    val seconds = (System.currentTimeMillis() - startedAt) / 1000.0
+                    Log.d(TAG, "sent $title to $host in ${"%.1f".format(seconds)}s")
                 } ?: throw IOException("Could not open input stream for URI: $uri")
             }
         }
@@ -269,6 +307,7 @@ class FileTransfer {
         const val ACCEPT_TIMEOUT_MS = 60_000
         const val READ_TIMEOUT_MS = 30_000
         const val CONNECT_TIMEOUT_MS = 10_000
+        const val PART_SUFFIX = ".part"
         const val BASE_RETRY_DELAY_MS = 1000L
     }
 }

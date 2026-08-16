@@ -78,6 +78,12 @@ android {
         unitTests {
             includeAndroidResources = true
 
+            // Unmocked android.jar methods return defaults instead of throwing. Without this,
+            // adding a Log call to production code makes every plain-JVM test that reaches it
+            // fail with "Method d in android.util.Log not mocked" — logging would silently
+            // dictate which tests must run under Robolectric.
+            returnDefaultValues = true
+
             // Print WHY a test failed in the build log. Without this a CI failure reads only
             // "There were failing tests. See the report at file:///…" — a path on a runner
             // that no longer exists by the time anyone looks.

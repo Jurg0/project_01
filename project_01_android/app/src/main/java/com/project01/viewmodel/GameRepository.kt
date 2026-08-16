@@ -293,6 +293,7 @@ class GameRepository(
         connectionState: String,
         playlistSummary: String,
         hosting: HostingState?,
+        players: List<String> = emptyList(),
     ): DiagnosticsReport = withContext(Dispatchers.IO) {
         val interfaces = try {
             java.net.NetworkInterface.getNetworkInterfaces().toList()
@@ -362,6 +363,7 @@ class GameRepository(
             hostReachable = reachability,
             playlistSummary = playlistSummary,
             hosting = hosting,
+            players = players,
         )
     }
 

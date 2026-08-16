@@ -32,13 +32,40 @@ Consequences that shape the code:
 
 Take this from **any phone that fails** — it is usually enough to identify the cause without adb.
 
-With adb available: `adb logcat -s GameNet` shows host resolution and discovery live.
+With adb available:
+
+```bash
+adb logcat -s GameNet:D FileTransfer:D
+```
+
+`GameNet` covers host resolution, discovery and joining. `FileTransfer` covers video sync —
+on a player you get `receiving X on port N`, its size, progress every 10%, and
+`complete, NNNMB in NNs`; on the host, `sending X to <ip>`. Videos download **one at a time,
+in playlist order**, so a partly-finished pre-load still leaves the early videos ready.
+
+## Pre-loading videos before the day
+
+Videos are cached permanently on each player, so large playlists can be synced ahead of time:
+
+1. Start the game as usual and let every player join.
+2. Leave them connected until the host's diagnostics shows every player at `N/N videos`.
+   Watch `adb logcat -s FileTransfer:D` on a player if you want live progress.
+3. End the game and hand the phones out. **The video files stay on the players.**
+4. When the real game starts, players re-join and already-cached videos are reused — only
+   genuinely missing ones transfer again.
+
+A transfer interrupted by disconnecting is discarded rather than half-kept, so an
+interrupted pre-load costs you that one video, not the whole playlist.
 
 ## Acceptance checklist
 
 - [ ] Game master reaches the blue screen after entering the password.
 - [ ] Every player reaches the blue screen after entering the correct password.
 - [ ] A wrong password returns the player to the start screen and receives nothing.
+- [ ] On the host, a password matching no prepared game starts nothing at all.
+- [ ] Every video plays on the players, not just the host — check `player readiness` in the
+      host's diagnostics before starting a large video; a player showing `2/3` has not
+      received it yet and will sit on the blue screen while the host plays.
 - [ ] Videos transfer to every player (check the playlist line in Diagnostics).
 - [ ] Play/Next advances **all** devices together; **video 2 plays on players**, not just the host.
 - [ ] Skipping back and forth quickly keeps devices in sync.

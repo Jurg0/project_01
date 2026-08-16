@@ -19,6 +19,8 @@ import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.verifyNoInteractions
+import org.mockito.kotlin.stub
+import org.mockito.kotlin.doSuspendableAnswer
 import org.robolectric.RobolectricTestRunner
 import java.io.File
 
@@ -269,5 +271,73 @@ class FileTransferOrchestratorTest {
             assertEquals(Uri.fromFile(File(tmpDir, name)), entry.uri)
         }
         assertEquals(setOf("a.mp4", "b.mp4", "c.mp4"), orchestrator.receivedVideoFiles)
+    }
+
+    // --- Sequential per-player queue ---
+
+    @Test
+    fun `missing videos are fetched one at a time, in playlist order`() = runTest(dispatcher) {
+        // Every missing video used to be requested at once, splitting the link N ways so
+        // nothing finished early — and an interrupted pre-load left every file partial and
+        // therefore discarded. One at a time means video 1 is playable while video 3 is
+        // still coming, and an early disconnect keeps whatever already finished.
+        isGameMaster = false
+        val started = mutableListOf<String>()
+        val firstCanFinish = kotlinx.coroutines.CompletableDeferred<Unit>()
+        fileTransfer.stub {
+            onBlocking { startReceivingWithRetry(any(), any(), any()) } doSuspendableAnswer { invocation ->
+                started.add(invocation.getArgument<java.io.File>(1).name)
+                if (started.size == 1) firstCanFinish.await()   // hold the queue on video 1
+                Unit
+            }
+        }
+        val orchestrator = newOrchestrator()
+        val incoming = listOf(
+            Video(Uri.parse("content://gm/one.mp4"), "one.mp4"),
+            Video(Uri.parse("content://gm/two.mp4"), "two.mp4"),
+            Video(Uri.parse("content://gm/three.mp4"), "three.mp4"),
+        )
+
+        orchestrator.resolveAndRequestMissing(incoming, senderAddress = "gm")
+        advanceUntilIdle()
+
+        assertEquals("only the first video may be in flight", listOf("one.mp4"), started)
+        assertEquals("and only its request goes out", 1, captureBroadcasts.size)
+        assertEquals("one.mp4", (captureBroadcasts.single() as FileTransferRequest).fileName)
+
+        firstCanFinish.complete(Unit)   // it finishes → the queue advances
+        advanceUntilIdle()
+
+        assertEquals(listOf("one.mp4", "two.mp4", "three.mp4"), started)
+        assertEquals(3, captureBroadcasts.size)
+        assertEquals(
+            listOf("one.mp4", "two.mp4", "three.mp4"),
+            captureBroadcasts.map { (it as FileTransferRequest).fileName },
+        )
+    }
+
+    @Test
+    fun `a playlist repeated while a transfer is in flight does not queue it twice`() = runTest(dispatcher) {
+        // The host re-broadcasts its playlist on every join, so this happens routinely during
+        // a long download. (A file that is still missing AFTER its transfer ended is meant to
+        // be requested again — that is the retry path, not a duplicate.)
+        isGameMaster = false
+        val inFlight = kotlinx.coroutines.CompletableDeferred<Unit>()
+        fileTransfer.stub {
+            onBlocking { startReceivingWithRetry(any(), any(), any()) } doSuspendableAnswer {
+                inFlight.await()
+                Unit
+            }
+        }
+        val orchestrator = newOrchestrator()
+        val incoming = listOf(Video(Uri.parse("content://gm/one.mp4"), "one.mp4"))
+
+        orchestrator.resolveAndRequestMissing(incoming, senderAddress = "gm")
+        advanceUntilIdle()
+        orchestrator.resolveAndRequestMissing(incoming, senderAddress = "gm")
+        advanceUntilIdle()
+
+        assertEquals("one request, not two", 1, captureBroadcasts.size)
+        inFlight.complete(Unit)
     }
 }

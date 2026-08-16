@@ -70,6 +70,8 @@ class GameViewModelTest {
     private lateinit var mockSnapshotManager: SnapshotManager
     @Mock
     private lateinit var mockPlaylistStore: PlaylistStore
+    @Mock
+    private lateinit var mockPreparedGameStore: com.project01.session.PreparedGameStore
 
     private lateinit var gameSyncEventLiveData: MutableLiveData<NetworkEvent>
     private lateinit var videosLiveData: MutableLiveData<List<Video>>
@@ -101,6 +103,7 @@ class GameViewModelTest {
         `when`(mockGameRepository.fileTransferEvent).thenReturn(MutableLiveData())
         whenever(mockGameRepository.isWifiEnabled()).thenReturn(true)
         whenever(mockGameRepository.resolveHostAddress()).thenReturn("192.168.43.1")
+        whenever(mockGameRepository.preparedGameStore).thenReturn(mockPreparedGameStore)
         whenever(mockApplication.mainLooper).thenReturn(mock(Looper::class.java))
         // FileTransferOrchestrator captures these at GameViewModel construction.
         whenever(mockApplication.filesDir).thenReturn(java.io.File(System.getProperty("java.io.tmpdir"), "gvm-test").apply { mkdirs() })
@@ -563,5 +566,36 @@ class GameViewModelTest {
 
         val expectedHash = PasswordHasher.hash("mypassword", nonce)
         verify(mockGameSync).broadcast(PasswordMessage(passwordHash = expectedHash))
+    }
+
+    // --- CREATE resolves a prepared game by password ---
+
+    @Test
+    fun `createGameForPassword starts nothing when no prepared game matches`() {
+        // Field failure: a mistyped password started the most recently used game — wrong
+        // content in front of the players, and a false success. Doing nothing is just as
+        // invisible to an onlooker as starting a session, and the game master sees the
+        // screen stay put.
+        whenever(mockPreparedGameStore.findByPassword("wrong")).thenReturn(null)
+
+        gameViewModel.createGameForPassword("wrong")
+
+        assertFalse("must not claim the host role", gameViewModel.isGameMaster())
+        verify(mockGameRepository, never()).setGameStarted(true)
+    }
+
+    @Test
+    fun `createGameForPassword starts the matching prepared game`() {
+        val prepared = com.project01.session.PreparedGame(
+            name = "woods",
+            password = "raven",
+            videos = listOf(com.project01.session.VideoDto("content://a.mp4", "a.mp4")),
+        )
+        whenever(mockPreparedGameStore.findByPassword("raven")).thenReturn(prepared)
+
+        gameViewModel.createGameForPassword("raven")
+
+        assertTrue("the matching game must start", gameViewModel.isGameMaster())
+        verify(mockGameRepository).setGameStarted(true)
     }
 }

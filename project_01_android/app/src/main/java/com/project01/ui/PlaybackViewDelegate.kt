@@ -122,6 +122,12 @@ class PlaybackViewDelegate(
                 // applyIntentToExoPlayer, which re-prepares on the next command; doing it
                 // here would spin in a prepare→error loop on a genuinely broken file.
                 Log.w(TAG, "playback error on item ${exoPlayer?.currentMediaItemIndex}", error)
+                // Fall back to the blue safe-screen. The surface is shown whenever intent says
+                // "playing", so an item that fails to load leaves the PREVIOUS video's last
+                // frame frozen on screen — field-observed: while the game master played a
+                // video the players hadn't received, they sat on a still frame of the one
+                // before it. Blue is the correct resting state when nothing is playing.
+                binding.playerView.videoSurfaceView?.visibility = View.GONE
             }
         })
 

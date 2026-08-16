@@ -1,5 +1,7 @@
 package com.project01.ui
 
+import android.os.Handler
+import android.os.Looper
 import android.view.GestureDetector
 import android.view.MotionEvent
 import androidx.appcompat.app.AppCompatActivity
@@ -54,21 +56,44 @@ class StartScreenControlsDelegate(
             true
         }
 
-        // Diagnostics is also reachable during a game — that's when the failures worth
-        // diagnosing happen (a video that won't start, a device that stopped obeying the
-        // host). In-game a phone is being carried, and a palm on the bottom corner would
-        // trigger a one-finger long-press, so in-game it requires TWO fingers. On the start
-        // screen the phone is being operated deliberately, so one finger is enough.
-        var pointersDown = 0
-        val diagnosticsDetector = GestureDetector(activity, object : GestureDetector.SimpleOnGestureListener() {
-            override fun onLongPress(e: MotionEvent) {
-                if (!isGameStarted() || pointersDown >= 2) onDiagnosticsRequested()
-            }
-        })
+        bindDiagnosticsHold()
+    }
+
+    /**
+     * Diagnostics: hold the bottom-left corner. In-game it takes TWO fingers, because a phone
+     * being carried can rest a palm on a corner; on the start screen the phone is being
+     * operated deliberately, so one finger is enough.
+     *
+     * Hand-rolled rather than GestureDetector: that class **cancels its pending long-press as
+     * soon as a second pointer goes down**, so `onLongPress` never fired for a two-finger hold
+     * and in-game diagnostics was unreachable (field-reported). Tracking the touch ourselves
+     * is the only way to require multiple fingers.
+     */
+    private fun bindDiagnosticsHold() {
+        val handler = Handler(Looper.getMainLooper())
+        var maxPointers = 0
+        val fire = Runnable {
+            if (!isGameStarted() || maxPointers >= 2) onDiagnosticsRequested()
+        }
         binding.diagnosticsHotspot.setOnTouchListener { _, event ->
-            pointersDown = event.pointerCount
-            diagnosticsDetector.onTouchEvent(event)
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    maxPointers = event.pointerCount
+                    handler.removeCallbacks(fire)
+                    handler.postDelayed(fire, HOLD_MS)
+                }
+                MotionEvent.ACTION_POINTER_DOWN ->
+                    maxPointers = maxOf(maxPointers, event.pointerCount)
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                    handler.removeCallbacks(fire)
+            }
             true
         }
+    }
+
+    private companion object {
+        /** Deliberately longer than the system long-press, so a brush against a corner can't
+         *  open a page of technical text mid-game. */
+        const val HOLD_MS = 900L
     }
 }

@@ -43,6 +43,12 @@ data class DiagnosticsReport(
     val playlistSummary: String,
     /** Set on the game master only; the host/probe fields below are meaningless there. */
     val hosting: HostingState? = null,
+    /**
+     * Game master only: what each player reports having received. This is the answer to
+     * "why did that video play only on my phone?" — a player that shows 2/3 hasn't got the
+     * third file yet, so it cannot play it however many times the host presses play.
+     */
+    val players: List<String> = emptyList(),
 ) {
     /** Plain text, made to be screenshotted or pasted into a message by a tester. */
     fun format(): String = buildString {
@@ -77,6 +83,11 @@ data class DiagnosticsReport(
             appendLine("answering discovery: ${if (hostingState.answeringProbes) "yes" else "NO"}")
             appendLine("clients connected: ${hostingState.connectedClients}")
             appendLine("players authenticated: ${hostingState.authenticatedClients}")
+            if (players.isEmpty()) appendLine("no players in the roster")
+            else {
+                appendLine("player readiness:")
+                players.forEach { appendLine("  $it") }
+            }
         } else {
             appendLine("— HOST —")
             appendLine("answered probe: ${discoveredHost ?: "no"}")

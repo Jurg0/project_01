@@ -7,6 +7,7 @@ import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.net.Uri
 import android.os.BatteryManager
+import android.util.Log
 import android.net.wifi.p2p.WifiP2pDevice
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LiveData
@@ -328,20 +329,23 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         android.os.Build.MODEL?.takeIf { it.isNotBlank() } ?: "Player"
 
     /**
-     * GM CREATE (undercover): resolve the entered password to a prepared game and start it.
-     * If a prepared (playlist, password) pair matches, load its playlist and use its password;
-     * otherwise start anyway with the current/_last playlist so an onlooker can't distinguish
-     * a right vs wrong password (the screen goes blue either way) — the GM privately notices
-     * the expected video doesn't play.
+     * GM CREATE (undercover): start the prepared game whose password matches, and only that.
+     *
+     * A password that matches nothing starts nothing. This previously fell through to
+     * "start anyway with whatever playlist was last loaded", on the theory that an onlooker
+     * shouldn't be able to tell a right password from a wrong one — but in the field a
+     * mistyped password launched the most recent game, which is both wrong content and a
+     * false success. Doing nothing is equally indistinguishable from the outside (no visible
+     * change either way) while the game master sees the screen stay put and knows to retry.
      */
     fun createGameForPassword(enteredPassword: String) {
         val match = repository.preparedGameStore.findByPassword(enteredPassword)
-        if (match != null) {
-            repository.restoreVideos(match.videos.map { it.toVideo() })
-            sessionController.createGame(match.password)
-        } else {
-            sessionController.createGame(enteredPassword)
+        if (match == null) {
+            Log.w(TAG, "no prepared game matches that password — not starting a session")
+            return
         }
+        repository.restoreVideos(match.videos.map { it.toVideo() })
+        sessionController.createGame(match.password)
     }
 
     fun endGame() = sessionController.endGame()
@@ -400,6 +404,10 @@ class GameViewModel(application: Application, val repository: GameRepository = G
             connectionState = connectionState.value?.name ?: "none",
             playlistSummary = "${videos.size} video(s), $local on this device",
             hosting = sessionController.hostingState(),
+            players = repository.currentPlayers.map { player ->
+                "${player.name} — ${player.readyVideoCount}/${player.totalVideoCount} videos" +
+                    if (player.batteryLevel >= 0) ", battery ${player.batteryLevel}%" else ""
+            },
         )
     }
 
@@ -541,6 +549,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     }
 
     companion object {
+        private const val TAG = "GameNet"
         const val STATUS_BROADCAST_INTERVAL_MS = 10_000L
 
         val Factory: ViewModelProvider.Factory = object : ViewModelProvider.Factory {

@@ -88,3 +88,22 @@ interrupted pre-load costs you that one video, not the whole playlist.
 ## Reporting a failure
 
 Include: which device failed, what you did, what it showed, and the Diagnostics text from that device. That combination has been enough to identify every failure so far; without it, a trip usually only rules out one guess.
+
+## Status as of 2026-08-16
+
+Confirmed working in the field, S23 host + A20e + S9 players:
+
+- Host prepares and starts a game; a password matching no prepared game starts nothing.
+- Both players join with the correct password; a wrong password returns them to the start screen.
+- Sequential video sync completes, including a **405 MB file in 214 s (~1.9 MB/s)**.
+- Playback is synchronized across host and both players.
+
+Open, not yet tested:
+
+- **8 players.** Phone hotspots commonly cap around 8–10 clients and this has never been tried.
+  Measure it before relying on it — it is a hardware limit, not something app code can fix.
+- **The real game master (a Nothing Phone 3) cannot be tested beforehand.** Everything host-side
+  has only ever run on an S23. This is why the app must describe its own state on screen.
+- **No "all players ready" signal.** You confirm a pre-load by watching `player readiness` in the
+  host's diagnostics until everyone reads `N/N`. An active notification would be an improvement.
+- Reconnect after walking out of range, and torch/screen commands, are still unverified this round.

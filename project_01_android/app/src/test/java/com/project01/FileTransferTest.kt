@@ -115,4 +115,30 @@ class FileTransferTest {
         outputFile.delete()
     }
 
+    @Test
+    fun `a failed send is actually retried`() = runTest {
+        // Regression: sendFile caught its own exceptions and returned normally, so the catch
+        // inside sendFileWithRetry could never fire and the loop returned after ONE attempt.
+        // The documented "up to 3 attempts" never ran — and the transfer most likely to need
+        // it is the big one (a 200MB video over a phone hotspot).
+        val fileTransfer = FileTransfer()
+        val file = File.createTempFile("retry", ".bin").apply { writeText("payload") }
+        // Nothing is listening on this port, so every attempt fails.
+        val deadPort = findFreePort()
+
+        val attempts = mutableListOf<FileTransferEvent>()
+        // Unconfined so the collector subscribes immediately: events is a MutableSharedFlow
+        // with no buffer, so anything emitted before a subscriber exists is dropped.
+        val collector = launch(kotlinx.coroutines.test.UnconfinedTestDispatcher(testScheduler)) {
+            fileTransfer.events.collect { attempts.add(it) }
+        }
+
+        fileTransfer.sendFileWithRetry("127.0.0.1", deadPort, file, maxRetries = 3)
+
+        val retries = attempts.filterIsInstance<FileTransferEvent.RetryAttempt>()
+        val failures = attempts.filterIsInstance<FileTransferEvent.Failure>()
+        assertEquals("should retry twice before giving up", 2, retries.size)
+        assertEquals("and report one final failure", 1, failures.size)
+        collector.cancel()
+    }
 }

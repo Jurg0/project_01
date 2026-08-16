@@ -1,6 +1,7 @@
 package com.project01.session
 
 import android.net.wifi.p2p.WifiP2pDevice
+import android.util.Log
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import com.project01.ui.ConnectionStatus
@@ -83,6 +84,10 @@ class SessionController(
     /** Mirrors setDiscoveryResponder so diagnostics can report it on the host. */
     private var answeringProbes = false
 
+    /** True from the moment this device starts hosting OR starts joining, until the session
+     *  ends. Guards against a device becoming a second game master mid-session. */
+    private var sessionActive = false
+
     init {
         observeReconnectionState()
     }
@@ -102,6 +107,7 @@ class SessionController(
                 "Turn on Wi-Fi and connect to the game's hotspot.", "Open Wi-Fi") { openWifiSettings() })
             return
         }
+        sessionActive = true
         _connectionState.postValue(ConnectionStatus.CONNECTING)
         // Pin our sockets to the hotspot before probing or dialing: when the phone has mobile
         // data on, the (internet-less) hotspot isn't the default network and traffic can
@@ -112,6 +118,7 @@ class SessionController(
             // which is what proved unreliable across devices.
             val host = discoverHost() ?: resolveHostAddress()
             if (host == null) {
+                sessionActive = false
                 setGameNetworkBound(false)
                 _connectionState.postValue(ConnectionStatus.DISCONNECTED)
                 postUiError(UiError.Recoverable(
@@ -258,6 +265,7 @@ class SessionController(
             // so the UI is already the start screen; just tear down cleanly and block
             // any reconnect.
             pendingAuthRejected = true
+            sessionActive = false
             gameSync.reconnectionManager.stopReconnecting()
             lastHost = null
             lastPort = null
@@ -275,6 +283,7 @@ class SessionController(
      */
     fun handleEndGame() {
         isEndingGame = true
+        sessionActive = false
         gameSync.reconnectionManager.stopReconnecting()
         pendingAuthRejected = false
         setGameNetworkBound(false)   // give the phone its normal network back
@@ -322,6 +331,17 @@ class SessionController(
      * starting a game (field-reported bug).
      */
     fun createGame(password: String) {
+        // Refuse to host while this device is already in a session. The CREATE target is a
+        // large invisible corner and its password dialog is deliberately identical to JOIN, so
+        // a stray double-tap on a phone that has joined (or is joining) would otherwise turn it
+        // into a second game master: it would skip file transfer (the GM branch of
+        // handleVideoList), broadcast playback intent against the real host, and — now that
+        // hosts answer discovery probes — advertise itself to other joining players.
+        if (sessionActive) {
+            Log.w(TAG, "ignoring createGame: this device is already in a session")
+            return
+        }
+        sessionActive = true
         this.gamePassword = password
         isEndingGame = false
         // Set unconditionally: isGameMaster() reads this, so leaving it null would silently
@@ -351,6 +371,7 @@ class SessionController(
 
     fun endGame() {
         isEndingGame = true
+        sessionActive = false
         setDiscoveryResponder(false)   // stop answering probes for a game that's ending
         answeringProbes = false
         authTimeouts.values.forEach { it.cancel() }
@@ -399,6 +420,8 @@ class SessionController(
     }
 
     companion object {
+        private const val TAG = "GameNet"
+
         const val END_GAME_DRAIN_MS = 500L
 
         // Password hard-gate timings.

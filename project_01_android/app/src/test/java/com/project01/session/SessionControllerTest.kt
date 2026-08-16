@@ -453,6 +453,61 @@ class SessionControllerTest {
     }
 
     @Test
+    fun `a device that has joined cannot become a second game master`() {
+        // Field failure: a phone that had joined showed GM controls, played no video (the GM
+        // branch of handleVideoList skips file transfer) and broadcast playback intent against
+        // the real host. CREATE is a large invisible corner whose password dialog is identical
+        // to JOIN, and hosts now answer discovery probes — so a stray double-tap would
+        // otherwise advertise a rival host to everyone still joining.
+        val controller = newController()
+        controller.connectToHost()
+
+        controller.createGame("secret")
+
+        assertFalse("must not claim the host role mid-session", controller.isGameMaster())
+        assertTrue("must not start answering probes", discoveryResponder.isEmpty())
+    }
+
+    @Test
+    fun `a game master cannot re-create a game over a running one`() {
+        val controller = newController()
+        controller.createGame("secret")
+        discoveryResponder.clear()
+        sessionStarts.clear()
+
+        controller.createGame("other")
+
+        assertTrue("must not restart the session", sessionStarts.isEmpty())
+        assertTrue(discoveryResponder.isEmpty())
+    }
+
+    @Test
+    fun `ending a game releases the guard so the next game can start`() = runTest(dispatcher) {
+        val controller = newController()
+        controller.createGame("secret")
+        controller.endGame()
+        advanceUntilIdle()
+        sessionStarts.clear()
+
+        controller.createGame("secret")
+
+        assertTrue("a fresh game must still be possible", controller.isGameMaster())
+        assertEquals(listOf(true), sessionStarts)
+    }
+
+    @Test
+    fun `a failed join releases the guard so the player can retry or host`() {
+        hostAddress = null
+        discoveredHost = null
+        val controller = newController()
+        controller.connectToHost()   // fails: nothing found
+
+        controller.createGame("secret")
+
+        assertTrue(controller.isGameMaster())
+    }
+
+    @Test
     fun `createGame starts answering discovery probes and ending the game stops it`() = runTest(dispatcher) {
         val controller = newController()
 

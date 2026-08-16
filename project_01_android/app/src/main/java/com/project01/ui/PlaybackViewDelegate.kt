@@ -1,11 +1,13 @@
 package com.project01.ui
 
+import android.util.Log
 import android.view.View
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import com.project01.R
@@ -109,6 +111,18 @@ class PlaybackViewDelegate(
                     player.playWhenReady,
                 )
             }
+
+            override fun onPlayerError(error: PlaybackException) {
+                // An unreadable item (a video whose transfer failed or hasn't finished, so
+                // the entry is still the game master's content:// URI) throws here and parks
+                // ExoPlayer in STATE_IDLE. That state IGNORES seekTo and playWhenReady, so
+                // without recovery the device stops obeying the game master for the rest of
+                // the session — field-observed: a 200MB video failed to start and the phone
+                // never responded to another command. Recovery happens in
+                // applyIntentToExoPlayer, which re-prepares on the next command; doing it
+                // here would spin in a prepare→error loop on a genuinely broken file.
+                Log.w(TAG, "playback error on item ${exoPlayer?.currentMediaItemIndex}", error)
+            }
         })
 
         intentReconcileJob?.cancel()
@@ -129,6 +143,14 @@ class PlaybackViewDelegate(
      */
     private fun applyIntentToExoPlayer(intent: PlaybackIntent) {
         val player = exoPlayer ?: return
+        // Heal a player that died on an unreadable item. After an error ExoPlayer sits in
+        // STATE_IDLE and silently ignores seekTo/playWhenReady, so every later command from
+        // the game master would be dropped. Re-preparing here — on a command rather than on
+        // the error — revives it without risking a prepare→error loop on a broken file.
+        if (player.playbackState == Player.STATE_IDLE) {
+            Log.d(TAG, "player idle after an error — re-preparing for the new command")
+            player.prepare()
+        }
         if (intent.videoIndex in 0 until player.mediaItemCount) {
             // Seek only when index changed or position diverges materially.
             // Avoids fighting ExoPlayer's natural advance within an item.
@@ -151,6 +173,7 @@ class PlaybackViewDelegate(
     }
 
     companion object {
+        private const val TAG = "GamePlay"
         /** Tolerance for "this is the same position" — avoids re-seeking on every
          *  intent emission when only the position field updated marginally. */
         private const val SEEK_TOLERANCE_MS = 500L

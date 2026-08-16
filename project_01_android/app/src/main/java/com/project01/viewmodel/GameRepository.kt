@@ -37,6 +37,15 @@ class GameRepository(
     private val _players = MutableLiveData<List<Player>>()
     val players: LiveData<List<Player>> = _players
 
+    // Synchronous mirror of the roster, for the same reason as videosMirror below: every
+    // roster update is a read-modify-write (add a player, rename one, attach its status) and
+    // LiveData.value lags a postValue. Two players authenticating close together both read
+    // the same stale list and the second write erases the first — the game master then shows
+    // one player while two are connected. Updated in updatePlayers alongside the LiveData.
+    @Volatile
+    private var playersMirror: List<Player> = emptyList()
+    val currentPlayers: List<Player> get() = playersMirror
+
     private val _videos = MutableLiveData<List<Video>>()
     val videos: LiveData<List<Video>> = _videos
 
@@ -228,6 +237,7 @@ class GameRepository(
     }
 
     fun updatePlayers(players: List<Player>) {
+        playersMirror = players
         _players.postValue(players)
     }
 

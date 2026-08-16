@@ -30,6 +30,7 @@ class StartScreenControlsDelegate(
     private val onCreateRequested: () -> Unit,
     private val onPrepareRequested: () -> Unit,
     private val onDiagnosticsRequested: () -> Unit = {},
+    private val isGameStarted: () -> Boolean = { false },
 ) {
     fun bind() {
         val createDetector = GestureDetector(activity, object : GestureDetector.SimpleOnGestureListener() {
@@ -53,12 +54,19 @@ class StartScreenControlsDelegate(
             true
         }
 
+        // Diagnostics is also reachable during a game — that's when the failures worth
+        // diagnosing happen (a video that won't start, a device that stopped obeying the
+        // host). In-game a phone is being carried, and a palm on the bottom corner would
+        // trigger a one-finger long-press, so in-game it requires TWO fingers. On the start
+        // screen the phone is being operated deliberately, so one finger is enough.
+        var pointersDown = 0
         val diagnosticsDetector = GestureDetector(activity, object : GestureDetector.SimpleOnGestureListener() {
             override fun onLongPress(e: MotionEvent) {
-                onDiagnosticsRequested()
+                if (!isGameStarted() || pointersDown >= 2) onDiagnosticsRequested()
             }
         })
         binding.diagnosticsHotspot.setOnTouchListener { _, event ->
+            pointersDown = event.pointerCount
             diagnosticsDetector.onTouchEvent(event)
             true
         }

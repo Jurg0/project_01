@@ -223,7 +223,10 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     }
 
     private fun addConnectedPlayer(address: String) {
-        val currentPlayers = players.value?.toMutableList() ?: mutableListOf()
+        // repository.currentPlayers, never players.value: these are read-modify-writes and the
+        // LiveData lags a postValue, so two players authenticating close together would each
+        // build on the same stale list and the second would erase the first.
+        val currentPlayers = repository.currentPlayers.toMutableList()
         if (currentPlayers.none { it.device.deviceAddress == address }) {
             val device = WifiP2pDevice().apply {
                 deviceAddress = address
@@ -235,7 +238,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     }
 
     private fun removeConnectedPlayer(address: String) {
-        val currentPlayers = players.value?.toMutableList() ?: return
+        val currentPlayers = repository.currentPlayers.toMutableList()
         if (currentPlayers.removeAll { it.device.deviceAddress == address }) {
             repository.updatePlayers(currentPlayers)
         }
@@ -243,7 +246,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
 
     private fun handlePlayerName(name: String, address: String) {
         if (isGameMaster()) {
-            val currentPlayers = players.value?.toMutableList() ?: return
+            val currentPlayers = repository.currentPlayers.toMutableList()
             val index = currentPlayers.indexOfFirst { it.device.deviceAddress == address }
             if (index >= 0) {
                 val existing = currentPlayers[index]
@@ -255,7 +258,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
 
     private fun handlePlayerStatus(status: PlayerStatusMessage, address: String) {
         if (isGameMaster()) {
-            val currentPlayers = players.value?.toMutableList() ?: return
+            val currentPlayers = repository.currentPlayers.toMutableList()
             val totalVideos = videos.value?.size ?: 0
             val index = currentPlayers.indexOfFirst { it.device.deviceAddress == address }
             if (index >= 0) {
@@ -515,7 +518,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
             currentVideoIndex = current.videoIndex,
             playbackPosition = playbackController.observedPosition(),
             isPlaying = current.isPlaying,
-            playerAddresses = players.value?.map { it.device.deviceAddress } ?: emptyList(),
+            playerAddresses = repository.currentPlayers.map { it.device.deviceAddress },
             // Informational only (snapshot provenance). There is no framework-supplied
             // device identity now that Wi-Fi Direct is gone.
             gameMasterAddress = "",

@@ -90,6 +90,7 @@ class MainActivity : AppCompatActivity() {
             onCreateRequested = { onCreateRequested() },
             onPrepareRequested = { onPrepareRequested() },
             onDiagnosticsRequested = { showDiagnosticsDialog() },
+            isGameStarted = { gameViewModel.isGameStarted.value == true },
         )
         startScreenControls.bind()
 
@@ -569,7 +570,10 @@ class MainActivity : AppCompatActivity() {
         // would otherwise pop the create dialog mid-game).
         binding.prepareHotspot.visibility = View.GONE
         binding.createHotspot.visibility = View.GONE
-        binding.diagnosticsHotspot.visibility = View.GONE
+        // Diagnostics stays reachable in-game: the failures worth diagnosing (a video that
+        // won't start, a device that stopped obeying the host) only happen mid-session, and
+        // it required a two-finger long-press here so a hand gripping the phone can't open it.
+        binding.diagnosticsHotspot.visibility = View.VISIBLE
         binding.playerView.announceForAccessibility("Game started. Video player is active.")
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 

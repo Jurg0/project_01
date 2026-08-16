@@ -232,14 +232,17 @@ class SocketNetworkManagerTest {
 
         manager.disconnectClient("127.0.0.1")
 
-        // The server closed our socket: draining the input stream hits EOF (or a reset).
-        var closed = false
-        try {
-            while (true) {
-                if (clientInput.read() == -1) { closed = true; break }
-            }
-        } catch (_: Exception) {
-            closed = true
+        // Draining the input stream should hit EOF (or a reset) because the server closed us.
+        // A read timeout means the socket is still open — that is the failure this asserts, so
+        // it must NOT be lumped in with the other exceptions. Treating every exception as
+        // "closed" made this test pass even if disconnectClient did nothing at all.
+        val closed = try {
+            while (clientInput.read() != -1) { /* drain whatever is still buffered */ }
+            true                                   // EOF: the server closed the connection
+        } catch (e: java.net.SocketTimeoutException) {
+            false                                  // still open after soTimeout — not evicted
+        } catch (e: Exception) {
+            true                                   // connection reset also means closed
         }
         assertTrue("Server should have closed the evicted client's socket", closed)
         assertEquals("127.0.0.1", disconnected.await())

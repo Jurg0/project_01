@@ -60,7 +60,7 @@ class VideoAdapter(
 
     override fun onBindViewHolder(holder: VideoViewHolder, position: Int) {
         val video = getItem(position)
-        holder.bind(video, position, editable, onMoveUp, onMoveDown, onRemove, onVideoSelected)
+        holder.bind(video, editable, onMoveUp, onMoveDown, onRemove, onVideoSelected)
         val progress = progressMap[video.title] ?: 0
         holder.updateProgress(progress)
         holder.updateFailedState(video.title in failedTransfers)
@@ -95,7 +95,6 @@ class VideoAdapter(
 
         fun bind(
             video: Video,
-            position: Int,
             editable: Boolean,
             onMoveUp: (Int) -> Unit,
             onMoveDown: (Int) -> Unit,

@@ -152,12 +152,14 @@ class SocketNetworkManager(val port: Int = 8888) : NetworkManager {
                 inputStream = DataInputStream(client.getInputStream())
                 while (isActive) {
                     val message = MessageEnvelope.readFrom(inputStream)
-                    client.inetAddress.hostAddress?.let { address ->
-                        if (message is HeartbeatMsg) {
-                            lastHeartbeat[address] = System.currentTimeMillis()
-                        } else {
-                            lastHeartbeat[address] = System.currentTimeMillis()
-                            _events.emit(NetworkEvent.DataReceived(message, address))
+                    // Named distinctly from the `address` above rather than shadowing it: a
+                    // silently rebound name in this layer is exactly how the HostDiscovery
+                    // bind bug happened (`port` inside an apply block resolved to the
+                    // socket's own property).
+                    client.inetAddress.hostAddress?.let { peerAddress ->
+                        lastHeartbeat[peerAddress] = System.currentTimeMillis()
+                        if (message !is HeartbeatMsg) {
+                            _events.emit(NetworkEvent.DataReceived(message, peerAddress))
                         }
                     }
                 }

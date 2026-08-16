@@ -19,7 +19,9 @@ class PasswordPromptDialogFragment(
 
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
         return activity?.let {
-            val builder = AlertDialog.Builder(it, com.google.android.material.R.style.ThemeOverlay_MaterialComponents_MaterialAlertDialog)
+            // No explicit theme: this resolves ?attr/alertDialogTheme from the app theme, the
+            // same path every other dialog takes, so button colours stay consistent.
+            val builder = AlertDialog.Builder(it)
             val view = requireActivity().layoutInflater.inflate(R.layout.dialog_create_game, null)
             val passwordEditText = view.findViewById<EditText>(R.id.password)
 

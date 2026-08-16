@@ -1,6 +1,12 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Base application theme. -->
-    <style name="Theme.Project01" parent="Theme.MaterialComponents.DayNight.DarkActionBar">
+    <!-- Not DayNight. The app is dark by hand — black window, navy content, white text — but
+         a DayNight parent let everything it *doesn't* hardcode (dialog surfaces, colorOnSurface,
+         textColorHint, text-field box strokes) flip with the phone's system setting. That
+         mismatch is what made password text unreadable on a phone in dark mode. Theme.Material-
+         Components is the dark base and already carries a dark action bar, so this is what
+         DayNight.DarkActionBar resolved to in night mode anyway. -->
+    <style name="Theme.Project01" parent="Theme.MaterialComponents">
         <!-- Primary brand color. -->
         <item name="colorPrimary">@color/blue_500</item>
         <item name="colorPrimaryVariant">@color/blue_700</item>
@@ -15,6 +21,67 @@
              hint bar don't expose a white strip behind the app content. -->
         <item name="android:windowBackground">@android:color/black</item>
         <item name="android:navigationBarColor">@android:color/black</item>
+        <!-- Dark surfaces, so dialogs match the app instead of Material's default grey. -->
+        <item name="colorSurface">@color/surface_dark</item>
+        <item name="colorOnSurface">@color/white</item>
+        <item name="android:colorBackground">@color/app_background</item>
+        <item name="colorOnBackground">@color/white</item>
+        <item name="android:textColorHint">@color/hint_grey</item>
+        <item name="textInputStyle">@style/Widget.Project01.TextInputLayout</item>
+        <!-- Every dialog in the app is built with AlertDialog.Builder, which resolves this. -->
+        <item name="alertDialogTheme">@style/ThemeOverlay.Project01.Dialog</item>
+        <item name="materialAlertDialogTheme">@style/ThemeOverlay.Project01.Dialog</item>
         <!-- Customize your theme here. -->
+    </style>
+
+    <!-- Dialog buttons (CANCEL/JOIN/DISCARD/…) take their text colour from colorPrimary.
+         The theme's blue_500 scores only 2.7:1 against the dark surface_dark dialog — unreadable
+         in the field. blue_200 scores 7.0:1 and is already the accent used by the text fields,
+         so dialogs and inputs now share one accent. Only the accent is overridden here; the
+         surface and text colours still come from the app theme underneath. -->
+    <style name="ThemeOverlay.Project01.Dialog"
+           parent="ThemeOverlay.MaterialComponents.MaterialAlertDialog">
+        <item name="colorPrimary">@color/blue_200</item>
+        <!-- The AppCompat dialog overlay chain hardcodes android:colorBackground to
+             background_floating_material_dark (#424242), a neutral grey that ignores the app's
+             colorSurface and leaves every dialog off-palette. Override it so dialogs use the
+             app's navy; that also lifts the button contrast from 4.5:1 to 7.0:1. -->
+        <item name="android:colorBackground">@color/surface_dark</item>
+        <item name="buttonBarPositiveButtonStyle">@style/Widget.Project01.DialogButton</item>
+        <item name="buttonBarNegativeButtonStyle">@style/Widget.Project01.DialogButton</item>
+        <item name="buttonBarNeutralButtonStyle">@style/Widget.Project01.DialogButton</item>
+    </style>
+
+    <style name="Widget.Project01.DialogButton"
+           parent="Widget.MaterialComponents.Button.TextButton.Dialog">
+        <item name="android:textColor">@color/blue_200</item>
+    </style>
+
+    <!-- One definition of how a text field looks, applied via textInputStyle above so the
+         layouts don't each re-specify colours (they disagreed: the password dialog hardcoded
+         black text, the prepare field white). -->
+    <style name="Widget.Project01.TextInputLayout"
+           parent="Widget.MaterialComponents.TextInputLayout.OutlinedBox">
+        <!-- A state list, not a plain colour: TextInputLayout reads a single boxStrokeColor as
+             the FOCUSED stroke only and leaves the resting stroke at Material's translucent
+             default, which is why the outline looked faint. -->
+        <item name="boxStrokeColor">@color/text_input_box_stroke</item>
+        <item name="hintTextColor">@color/blue_200</item>          <!-- focused label -->
+        <item name="android:textColorHint">@color/hint_grey</item> <!-- resting label -->
+        <item name="materialThemeOverlay">@style/ThemeOverlay.Project01.TextInputLayout</item>
+    </style>
+
+    <!-- Scopes the accent to the field: cursor, focused stroke and floating label all follow
+         colorPrimary. blue_200 (#64B5F6) reads on navy; the theme's blue_500 does not.
+
+         MUST inherit from Material's OutlinedBox overlay. materialThemeOverlay REPLACES rather
+         than merges, so a parent="" overlay drops the editTextStyle that OutlinedBox mode needs
+         and the nested EditText keeps its default underline background — the field then renders
+         as a filled box with no outline. Verified on a device; boxBackgroundMode still reads
+         OUTLINE in that state, so unit assertions alone don't catch it. -->
+    <style name="ThemeOverlay.Project01.TextInputLayout"
+           parent="ThemeOverlay.MaterialComponents.TextInputEditText.OutlinedBox">
+        <item name="colorPrimary">@color/blue_200</item>
+        <item name="colorOnSurface">@color/white</item>
     </style>
 </resources>

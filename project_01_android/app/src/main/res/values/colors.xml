@@ -13,4 +13,10 @@
     <color name="safe_blue">#FF1565C0</color>
     <color name="ic_launcher_background">#FF0A1929</color>
     <color name="app_background">#FF0A1929</color>
+
+    <!-- Dark-theme surface + text-field tokens. The app is dark by design, so these are
+         fixed rather than day/night variants — see themes.xml. -->
+    <color name="surface_dark">#FF12263A</color>   <!-- dialogs: one step up from app_background -->
+    <color name="hint_grey">#B3FFFFFF</color>      <!-- 70% white: resting hint / helper text -->
+    <color name="stroke_idle">#66FFFFFF</color>    <!-- 40% white: unfocused box stroke -->
 </resources>

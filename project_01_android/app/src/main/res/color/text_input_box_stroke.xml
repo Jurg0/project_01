@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Box stroke for text fields. Must be a state list: given a plain colour, TextInputLayout
+     applies it to the focused state only and the resting stroke stays at Material's
+     translucent colorOnSurface default, which is nearly invisible on the app's navy. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:color="@color/blue_200" android:state_focused="true" />
+    <item android:color="@color/stroke_idle" />
+</selector>

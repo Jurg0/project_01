@@ -222,13 +222,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun promptNewPreparedGame() {
-        val input = android.widget.EditText(this).apply {
-            hint = "Game name"
-            setSingleLine()
-        }
+        val view = layoutInflater.inflate(R.layout.dialog_text_input, null)
+        val input = view.findViewById<android.widget.EditText>(R.id.text_input)
+        // Hint on the layout, not the EditText, so it floats above the box when typing.
+        view.findViewById<com.google.android.material.textfield.TextInputLayout>(
+            R.id.text_input_layout
+        ).hint = "Game name"
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("New prepared game")
-            .setView(input)
+            .setView(view)
             .setPositiveButton("Create") { _, _ ->
                 val name = input.text.toString().trim()
                 if (name.isNotEmpty()) {

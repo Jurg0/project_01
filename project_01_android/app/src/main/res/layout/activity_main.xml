@@ -130,21 +130,20 @@
                 android:paddingHorizontal="12dp"
                 android:visibility="gone">
 
+                <!-- Colours come from the theme's textInputStyle. inputType="text" is
+                     deliberate: the game master authors the password at home and wants to
+                     read it back, so no masking and no reveal toggle here. -->
                 <com.google.android.material.textfield.TextInputLayout
                     android:id="@+id/prepare_password_layout"
-                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:hint="Password"
-                    app:boxStrokeColor="@color/blue_200"
-                    app:hintTextColor="@color/blue_200">
+                    android:hint="Password">
 
                     <com.google.android.material.textfield.TextInputEditText
                         android:id="@+id/prepare_password"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:inputType="text"
-                        android:textColor="@android:color/white" />
+                        android:inputType="text" />
                 </com.google.android.material.textfield.TextInputLayout>
 
                 <!-- Actions: Done (dismissive, text) + Save game (primary, filled). -->

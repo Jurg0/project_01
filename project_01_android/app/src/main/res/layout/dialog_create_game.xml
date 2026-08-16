@@ -6,21 +6,22 @@
     android:orientation="vertical"
     android:padding="16dp">
 
+    <!-- Colours come from the theme's textInputStyle — this field used to hardcode black text,
+         which vanished on the dark dialog surface. The reveal toggle is identical for JOIN and
+         the hidden CREATE action, so it doesn't give the game master away. -->
     <com.google.android.material.textfield.TextInputLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:hint="Password"
-        android:textColorHint="#B0B0B0"
-        app:hintTextColor="#B0B0B0"
-        app:boxStrokeColor="@color/blue_200">
+        app:endIconMode="password_toggle"
+        app:endIconTint="@color/hint_grey">
 
         <com.google.android.material.textfield.TextInputEditText
             android:id="@+id/password"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:autofillHints="password"
-            android:inputType="textPassword"
-            android:textColor="@android:color/black" />
+            android:inputType="textPassword" />
 
     </com.google.android.material.textfield.TextInputLayout>
 

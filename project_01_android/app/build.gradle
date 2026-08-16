@@ -77,6 +77,30 @@ android {
     testOptions {
         unitTests {
             includeAndroidResources = true
+
+            // Print WHY a test failed in the build log. Without this a CI failure reads only
+            // "There were failing tests. See the report at file:///…" — a path on a runner
+            // that no longer exists by the time anyone looks.
+            all {
+                testLogging {
+                    events "failed", "skipped"
+                    exceptionFormat "full"
+                    showExceptions = true
+                    showCauses = true
+                    showStackTraces = true
+                    // Our own Log output for the failing test, which is often the whole story.
+                    showStandardStreams = false
+                }
+                // A one-line tally at the end, so a green run is also legible.
+                afterSuite { desc, result ->
+                    if (desc.parent == null) {
+                        println("Tests: ${result.testCount} — " +
+                                "${result.successfulTestCount} passed, " +
+                                "${result.failedTestCount} failed, " +
+                                "${result.skippedTestCount} skipped")
+                    }
+                }
+            }
         }
     }
 }

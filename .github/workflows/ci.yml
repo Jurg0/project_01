@@ -30,3 +30,41 @@ jobs:
 
       - name: Run unit tests
         run: ./project_01_android/gradlew -p ./project_01_android testDebugUnitTest
+
+      # The failure text in the log points at a file:// path on the runner, which is gone by
+      # the time anyone reads it. Keep the actual reports.
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-report
+          path: |
+            project_01_android/app/build/reports/tests/testDebugUnitTest/
+            project_01_android/app/build/test-results/testDebugUnitTest/
+          retention-days: 14
+          if-no-files-found: warn
+
+      # Failures at a glance, in the job summary, without downloading anything.
+      - name: Summarise failures
+        if: failure()
+        run: |
+          echo "## Failed tests" >> "$GITHUB_STEP_SUMMARY"
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import glob, xml.etree.ElementTree as ET
+          found = False
+          for path in glob.glob('project_01_android/app/build/test-results/testDebugUnitTest/*.xml'):
+              for case in ET.parse(path).getroot().iter('testcase'):
+                  problem = case.find('failure')
+                  if problem is None:
+                      problem = case.find('error')
+                  if problem is None:
+                      continue
+                  found = True
+                  print(f"### {case.get('classname','?').split('.')[-1]} › {case.get('name','?')}")
+                  print("```")
+                  print((problem.get('message') or '').strip()[:600])
+                  print(((problem.text or '').strip().splitlines() or [''])[0][:300])
+                  print("```")
+          if not found:
+              print("_No failing test cases recorded — the build failed before or outside the tests._")
+          PY

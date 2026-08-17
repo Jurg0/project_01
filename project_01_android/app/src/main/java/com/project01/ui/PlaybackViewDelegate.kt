@@ -35,22 +35,21 @@ class PlaybackViewDelegate(
 ) {
     private var exoPlayer: ExoPlayer? = null
     private var intentReconcileJob: Job? = null
+    private val endOfVideo = EndOfVideoTracker()
 
     fun mediaItemCount(): Int = exoPlayer?.mediaItemCount ?: 0
 
     /**
      * True when ExoPlayer is parked at the end of the current item.
      *
-     * Reads [Player.STATE_ENDED] directly rather than comparing position against duration:
-     * `pauseAtEndOfMediaItems` parks the player in STATE_ENDED at exactly that point, so this
-     * is the authoritative signal. The old `position >= duration - 500ms` heuristic misfired
-     * on short videos (a 2s clip counts as "at the end" for a quarter of its length) and
-     * while a seek was still settling (duration/position briefly belong to different items),
-     * which made the GM's Play button advance when it should have resumed — skipping a video
-     * and desyncing the group.
+     * Delegated to [EndOfVideoTracker], which listens for the END_OF_MEDIA_ITEM pause as well
+     * as STATE_ENDED. Reading STATE_ENDED alone was wrong for every video except the last one
+     * — see [EndOfVideoTracker] for the measurements and the three field symptoms it caused.
+     * Comparing position against duration is also wrong (it misfires on short videos and
+     * mid-seek), which is why this is tracked from the callbacks instead of computed.
      */
     fun isAtEndOfCurrent(): Boolean =
-        exoPlayer?.playbackState == Player.STATE_ENDED
+        endOfVideo.isAtEndOfVideo(exoPlayer?.playbackState ?: Player.STATE_IDLE)
 
     fun onResume() {
         initializePlayer()
@@ -64,6 +63,7 @@ class PlaybackViewDelegate(
         val mediaItems = videos.map { MediaItem.fromUri(it.uri) }
         exoPlayer?.setMediaItems(mediaItems)
         exoPlayer?.prepare()
+        endOfVideo.onPlaylistReplaced()
     }
 
     private fun initializePlayer() {
@@ -80,7 +80,18 @@ class PlaybackViewDelegate(
         currentVideosProvider()?.let { updatePlaylist(it) }
 
         exoPlayer?.addListener(object : Player.Listener {
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                // The ONLY signal that a non-last video finished: with
+                // pauseAtEndOfMediaItems, ExoPlayer stays in STATE_READY and reports
+                // playWhenReady = false with reason END_OF_MEDIA_ITEM. Measured on an S9.
+                // The intent flip to paused (blue safe-screen) comes from
+                // onIsPlayingChanged below; this only records that the video is finished,
+                // so the GM's next Play press advances instead of resuming.
+                endOfVideo.onPlayWhenReadyChanged(reason)
+            }
+
             override fun onPlaybackStateChanged(playbackState: Int) {
+                endOfVideo.onPlaybackStateChanged(playbackState)
                 // pauseAtEndOfMediaItems parks the player in STATE_ENDED at the
                 // end of each video WITH playWhenReady still true — so the
                 // playWhenReady we report below can't detect the end. Report the
@@ -157,6 +168,7 @@ class PlaybackViewDelegate(
             Log.d(TAG, "player idle after an error — re-preparing for the new command")
             player.prepare()
         }
+        var seeked = false
         if (intent.videoIndex in 0 until player.mediaItemCount) {
             // Seek only when index changed or position diverges materially.
             // Avoids fighting ExoPlayer's natural advance within an item.
@@ -164,9 +176,13 @@ class PlaybackViewDelegate(
             val positionDelta = Math.abs(player.currentPosition - intent.positionMs)
             if (indexChanged || positionDelta > SEEK_TOLERANCE_MS) {
                 player.seekTo(intent.videoIndex, intent.positionMs)
+                seeked = true
             }
         }
         player.playWhenReady = intent.isPlaying
+        // A commanded pause must not clear this — the end of a video IS a commanded pause, and
+        // the next Play press still needs to know the video was finished.
+        endOfVideo.onIntentApplied(seeked = seeked, isPlaying = intent.isPlaying)
         binding.playerView.videoSurfaceView?.visibility =
             if (intent.isPlaying) View.VISIBLE else View.GONE
     }

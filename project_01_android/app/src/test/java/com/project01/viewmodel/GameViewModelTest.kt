@@ -75,6 +75,36 @@ class GameViewModelTest {
 
     private lateinit var gameSyncEventLiveData: MutableLiveData<NetworkEvent>
     private lateinit var videosLiveData: MutableLiveData<List<Video>>
+    private lateinit var fakeNormalizer: FakeVideoNormalizer
+
+    /**
+     * Stands in for the media3 conversion. Lets a test say "this video came back converted" or
+     * "conversion failed" without a real encoder, which is the only part of the behaviour the
+     * ViewModel is responsible for.
+     */
+    private class FakeVideoNormalizer(
+        var result: (Uri, String) -> com.project01.session.NormalizeResult = { _, _ ->
+            com.project01.session.NormalizeResult.Unchanged(1920, 1080)
+        },
+    ) : com.project01.session.VideoNormalizer {
+        var progressReported = mutableListOf<Int>()
+        var resolutions: (Uri) -> com.project01.session.VideoProbe? = {
+            com.project01.session.VideoProbe(1920, 1080)
+        }
+
+        override suspend fun normalize(
+            uri: Uri,
+            title: String,
+            onProgress: (Int) -> Unit,
+        ): com.project01.session.NormalizeResult {
+            onProgress(0)
+            progressReported.add(0)
+            return result(uri, title)
+        }
+
+        override suspend fun resolutionOf(uri: Uri): com.project01.session.VideoProbe? =
+            resolutions(uri)
+    }
 
     private lateinit var gameViewModel: GameViewModel
 
@@ -109,6 +139,10 @@ class GameViewModelTest {
         whenever(mockApplication.filesDir).thenReturn(java.io.File(System.getProperty("java.io.tmpdir"), "gvm-test").apply { mkdirs() })
         whenever(mockApplication.contentResolver).thenReturn(mock(android.content.ContentResolver::class.java))
         whenever(mockGameRepository.fileTransfer).thenReturn(mock(com.project01.session.FileTransfer::class.java))
+        // Default: every picked video is already small enough, so addVideo behaves as it did
+        // before conversion existed. Tests that care override this.
+        fakeNormalizer = FakeVideoNormalizer()
+        whenever(mockGameRepository.videoNormalizer).thenReturn(fakeNormalizer)
         gameViewModel = GameViewModel(mockApplication, mockGameRepository)
     }
 
@@ -214,6 +248,129 @@ class GameViewModelTest {
 
         verify(mockGameRepository).restoreVideos(any())
         verify(mockGameSync).broadcast(any<com.project01.session.VideoListMessage>())
+    }
+
+    @Test
+    fun `addVideo puts the converted copy in the playlist, not the oversized original`() = runTest {
+        // The whole point of converting at playlist-build time: nothing downstream — the saved
+        // prepared game, the wire playlist, the file transfer — ever sees the 8K original.
+        val original = Uri.parse("content://8k-original")
+        val converted = Video(Uri.parse("file:///data/clip_1080p.mp4"), "clip_1080p.mp4", 25_000_000L)
+        videosLiveData.value = emptyList()
+        whenever(mockGameRepository.getFileName(original)).thenReturn("clip.mp4")
+        fakeNormalizer.result = { _, _ ->
+            com.project01.session.NormalizeResult.Converted(
+                video = converted,
+                fromWidth = 7680, fromHeight = 4320,
+                toWidth = 1920, toHeight = 1080,
+                reused = false,
+            )
+        }
+
+        gameViewModel.addVideo(original)
+
+        verify(mockGameRepository).restoreVideos(listOf(converted))
+    }
+
+    @Test
+    fun `addVideo keeps the original and warns when conversion fails`() = runTest {
+        // A fleet of new phones plays 8K fine, so a failed conversion must not silently drop
+        // the video — the game master decides.
+        val original = Uri.parse("content://8k-original")
+        var emitted: UiError? = null
+        gameViewModel.uiError.observeForever { emitted = it }
+        videosLiveData.value = emptyList()
+        whenever(mockGameRepository.getFileName(original)).thenReturn("clip.mp4")
+        fakeNormalizer.result = { _, _ ->
+            com.project01.session.NormalizeResult.Failed("no encoder", 7680, 4320)
+        }
+
+        gameViewModel.addVideo(original)
+
+        verify(mockGameRepository).restoreVideos(listOf(Video(original, "clip.mp4")))
+        assertTrue(emitted is UiError.Recoverable)
+        assertTrue(emitted!!.message.contains("7680x4320"))
+    }
+
+    @Test
+    fun `addVideo clears the conversion status when it finishes`() = runTest {
+        // Left set, the progress Snackbar would stay on screen for the rest of the session.
+        val uri = Uri.parse("content://video1")
+        videosLiveData.value = emptyList()
+        whenever(mockGameRepository.getFileName(uri)).thenReturn("Test Video")
+
+        gameViewModel.addVideo(uri)
+
+        assertNull(gameViewModel.conversionStatus.value)
+    }
+
+    @Test
+    fun `diagnostics flags a playlist entry the player phones cannot decode`() = runTest {
+        // Without adb on the game master's phone, this line is the whole diagnosis.
+        val big = Video(Uri.parse("file:///data/big.mp4"), "big.mp4", 207L * 1024 * 1024)
+        val fine = Video(Uri.parse("file:///data/ok.mp4"), "ok.mp4", 24L * 1024 * 1024)
+        videosLiveData.value = listOf(big, fine)
+        fakeNormalizer.resolutions = { uri ->
+            if (uri.toString().contains("big")) com.project01.session.VideoProbe(7680, 4320)
+            else com.project01.session.VideoProbe(1920, 1080)
+        }
+        val entries = org.mockito.kotlin.argumentCaptor<List<String>>()
+        whenever(
+            mockGameRepository.collectDiagnostics(
+                any(), any(), any(), anyOrNull(), any(), entries.capture()
+            )
+        ).thenReturn(emptyDiagnosticsReport())
+
+        gameViewModel.collectDiagnostics()
+
+        val lines = entries.firstValue
+        assertEquals(2, lines.size)
+        assertTrue(lines[0], lines[0].contains("7680x4320"))
+        assertTrue(lines[0], lines[0].contains("TOO LARGE"))
+        assertTrue(lines[0], lines[0].contains("207MB"))
+        assertFalse(lines[1], lines[1].contains("TOO LARGE"))
+    }
+
+    private fun emptyDiagnosticsReport() = com.project01.session.DiagnosticsReport(
+        deviceModel = "test", androidRelease = "11", apiLevel = 30, appVersion = "1.0",
+        role = "game master", connectionState = "HOST", wifiEnabled = true,
+        interfaces = emptyList(), gatewayCandidates = emptyList(),
+        derivedHost = null, discoveredHost = null, hostReachable = null,
+        playlistSummary = "2 video(s), 2 on this device",
+    )
+
+    @Test
+    fun `prepareGame converts entries an older build left oversized and re-saves`() = runTest {
+        // A game prepared before conversion existed still holds its 8K entries. Without this
+        // sweep the fix would never reach the playlist that actually broke the field test.
+        val oversized = Video(Uri.parse("content://8k"), "clip.mp4")
+        val converted = Video(Uri.parse("file:///data/clip_1080p.mp4"), "clip_1080p.mp4", 25L)
+        videosLiveData.value = listOf(oversized)
+        fakeNormalizer.result = { _, _ ->
+            com.project01.session.NormalizeResult.Converted(
+                video = converted,
+                fromWidth = 7680, fromHeight = 4320, toWidth = 1920, toHeight = 1080,
+                reused = false,
+            )
+        }
+
+        gameViewModel.prepareGame("night walk", "hunter2", listOf(oversized))
+
+        // Saved once with what the editor held, then again with the converted playlist.
+        verify(mockPreparedGameStore, org.mockito.kotlin.times(2))
+            .save(any<com.project01.session.PreparedGame>())
+        verify(mockGameRepository).restoreVideos(listOf(converted))
+    }
+
+    @Test
+    fun `prepareGame does not rewrite anything when every video already fits`() = runTest {
+        val fine = Video(Uri.parse("file:///data/clip.mp4"), "clip.mp4", 100L)
+        videosLiveData.value = listOf(fine)
+
+        gameViewModel.prepareGame("night walk", "hunter2", listOf(fine))
+
+        verify(mockPreparedGameStore).save(any<com.project01.session.PreparedGame>())
+        verify(mockGameRepository, never()).restoreVideos(any())
     }
 
     @Test

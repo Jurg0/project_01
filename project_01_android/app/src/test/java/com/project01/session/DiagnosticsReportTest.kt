@@ -29,6 +29,21 @@ class DiagnosticsReportTest {
     )
 
     @Test
+    fun `report lists each playlist entry with the resolution the fleet must decode`() {
+        // The game master's phone has no developer mode, so this screen is the only place an
+        // 8K video — which plays there and nowhere else — can be caught before a game.
+        val text = report().copy(
+            playlistEntries = listOf(
+                "1. big.mp4 — 7680x4320 TOO LARGE — older phones will stay blue, 207MB, on this device",
+                "2. ok.mp4 — 1920x1080, 24MB, on this device",
+            )
+        ).format()
+
+        assertTrue(text.contains("7680x4320 TOO LARGE"))
+        assertTrue(text.contains("2. ok.mp4"))
+    }
+
+    @Test
     fun `report names the device and API level`() {
         // The API level alone explained a real failure: an API 29 phone lost a host-resolution
         // path that an API 30 phone on the same hotspot used successfully.

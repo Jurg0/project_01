@@ -60,7 +60,7 @@ Three layers handle connectivity:
 
 2. **Game state sync (Session layer):** `GameSync` wraps `NetworkManager` (interface) with `SocketNetworkManager` as the TCP socket implementation. Server listens on port 8888. Uses kotlinx.serialization JSON with a 4-byte length-prefixed wire format (`MessageEnvelope` for encode/decode). All network messages implement the `GameMessage` sealed interface. `MessageEnvelope.PROTOCOL_VERSION` is sent in the `PasswordChallenge` handshake to detect version mismatches between devices. Broadcasts messages to all connected clients via a `clients: Map<String, OutputStream>`.
 
-3. **File transfer:** `FileTransfer` uses a separate `ServerSocket` per transfer with a 64KB buffer, an 8-byte size header and a 32-byte SHA-256 checksum. Logs under tag `FileTransfer` (size, progress every 10%, completion time) — `adb logcat -s GameNet:D FileTransfer:D`.
+3. **File transfer:** `FileTransfer` uses a separate `ServerSocket` per transfer with a 64KB buffer, an 8-byte size header and a 32-byte SHA-256 checksum. Logs under tag `FileTransfer` (size, progress every 10%, completion time) — `adb logcat -s GameNet:D FileTransfer:D GamePlay:W VideoPrep:D`. **Include `GamePlay` in that filter**: playback errors are logged under it, and a field test run without it mistook two videos the player phones could not decode for a broken playback sync — the transfer logs looked perfect because they were.
 
    - **Downloads run ONE AT A TIME, in playlist order**, per player (`FileTransferOrchestrator`'s Channel-backed queue + single worker). Parallel fetching split the link N ways so nothing finished early, and an interrupted pre-load left every file partial and therefore discarded. Different players still transfer concurrently.
    - **Downloads land in a `.part` file** and are renamed only after the checksum verifies, so a file on disk always means complete-and-verified. Writing straight to the destination let an interrupted transfer leave a stub that `exists()` accepted as cached forever.
@@ -97,6 +97,13 @@ Three layers handle connectivity:
 - **Diagnostics screen** (`session/DiagnosticsReport.kt`): hold the bottom-left corner — one finger on the start screen, **two fingers in-game**. Reports device/API, interfaces and addresses, gateways, whether the host answered a probe, TCP reachability, and per-player video readiness on the host. Refreshes every 2s while open. Hand-rolled hold detection because `GestureDetector` cancels its long-press when a second pointer lands, which made the two-finger gesture impossible to trigger.
 - Clients auto-reconnect on disconnect via `ReconnectionManager` (exponential backoff with jitter, max 10 retries). `SessionController` observes the reconnect state flow and updates `connectionState` LiveData.
 - Videos are transferred to player devices' local storage via `FileTransfer` (orchestrated by `FileTransferOrchestrator`) so playback works on slow/intermittent connections. `handleVideoList` resolves each title against `filesDir` first; only missing files trigger a transfer. The request carries no self-address — the GM replies to the source IP of the request's socket (`handleFileTransferRequest`'s `fromIp`), so `FileTransferRequest.targetAddress` is unread. It used to hold the Wi-Fi Direct MAC and *gated* the request on being non-null, which would have silently stopped every transfer once Wi-Fi Direct was removed.
+- **Oversized videos are downscaled when the playlist is built, not at session time.** `GameViewModel.addVideo` → `prepareForFleet` → `VideoNormalizer` (media3 Transformer) rewrites anything outside 1920x1080 to fit, on the game master's phone, before the entry enters the playlist. Everything downstream — the saved prepared game, `VideoListMessage`, the file transfer — therefore only ever handles a file the whole fleet can decode.
+  - **Why the ceiling is 1080p:** the game master's S23 records 8K (7680x4320 HEVC). An S9 and an A20e both failed at `MediaCodec.configure` on those files (`errstate=CONFIGURING`, `errcode=-5001` in `dumpsys media.metrics`) while playing a 1080p recording from the same phone without trouble. The video appeared on the game master's screen and nowhere else, which in the field is indistinguishable from broken playback sync — the transfers and the playlist order were all verifiably correct. 1080p is also all a phone screen shows, and it cuts the file roughly tenfold: 207MB → ~25MB, i.e. ~110s → ~13s per player at 1.9 MB/s.
+  - `VideoSizeRules` holds the arithmetic. `Presentation.createForHeight` takes the **displayed** height (rotation applied) and preserves the rotation metadata — verified on an A20e: a portrait recording stored 1920x1080/rotation 90 asked for height 540 and came out displayed 304x540. So a portrait video must ask for the long side, a landscape one for the short side.
+  - Output lands in a `.part` file and is renamed only after the export finished **and** the produced resolution was measured to be inside the limits — the encoder may fall back to a resolution nobody asked for, and a copy that is still too large fails on exactly the phones this protects. Same `.part` reasoning as `FileTransfer`.
+  - A conversion that fails does **not** block the video: the game master gets the original plus a warning, since a fleet of new phones plays 8K fine and only the GM knows what their fleet is. Converted copies are reused by title (`clip.mp4` → `clip_1080p.mp4`), so re-adding a video costs nothing and one video never produces more than one copy.
+  - **Conversions are serialized** (a `Mutex` in `Media3VideoNormalizer`). Adding several videos in a row would otherwise start several hardware encodes at once, which fight over the same encoder — the same reason file transfers run one at a time per device.
+  - **The game master's phone has no developer mode, so there is no adb on the one device that builds playlists.** The diagnostics screen therefore lists every playlist entry with its resolution and flags anything over the limit (`7680x4320 TOO LARGE — older phones will stay blue`); `VideoNormalizer.resolutionOf` caches probes so the 2s refresh is free. Conversion progress and the total time are shown on screen for the same reason.
 - Game master periodically broadcasts a `GameStateSnapshot` so all devices can resume after a crash.
 - Protocol version is checked during the `PasswordChallenge` handshake; mismatched versions show a `UiError.Critical` to the user.
 
@@ -114,7 +121,7 @@ Three layers handle connectivity:
 - **Min SDK 24 / Target SDK 34**, Compile SDK 34, Java target 11
 - **Kotlin 1.9.22**, Android Gradle Plugin 8.4.1, Gradle 9.2.1
 - **Serialization:** kotlinx.serialization 1.6.2 (JSON)
-- **Video:** ExoPlayer (media3 1.2.1)
+- **Video:** ExoPlayer (media3 1.2.1); media3-transformer/effect for the playlist-time downscale
 - **UI:** XML layouts with ConstraintLayout, Material Design
 - **Navigation:** AndroidX Navigation (fragment-based)
 - **Testing:** JUnit 4, Mockito + Mockito-Kotlin, Robolectric, Turbine (Flow testing), kotlinx-coroutines-test
@@ -126,7 +133,8 @@ Three layers handle connectivity:
 - All network message types implement `GameMessage` sealed interface with `@Serializable` annotations; `classDiscriminator = "msg_type"` (not "type" — clashes with PlaybackCommand's `type` field)
 - `VideoDto` bridges `Video` (uses Android `Uri`) to serializable form; extension functions `Video.toDto()` / `VideoDto.toVideo()` in Video.kt
 - Data classes use `@Parcelize` (Player, Video)
-- `GameRepository` constructs dependencies directly (no DI framework): `GameSync(SocketNetworkManager())`, `FileTransfer()`, plus `SnapshotManager` and `PlaylistStore`. All four are constructor-injectable for tests.
+- `GameRepository` constructs dependencies directly (no DI framework): `GameSync(SocketNetworkManager())`, `FileTransfer()`, plus `SnapshotManager`, `PlaylistStore` and `Media3VideoNormalizer`. All are constructor-injectable for tests.
+- `Media3VideoNormalizer` takes its metadata probe and its export step as constructor lambdas, so the surrounding bookkeeping (reuse, `.part` cleanup, rejecting a too-large result) is tested without a real decoder or encoder.
 - `GameViewModel` takes `GameRepository` as a default constructor parameter and constructs `PlaybackController` / `FileTransferOrchestrator` / `SessionController` in property initializers. Controllers receive narrow callbacks (e.g. `isGameMaster: () -> Boolean`, `videosProvider: () -> List<Video>?`) rather than the full `GameViewModel`.
 - Cross-controller hooks: `SessionController` fires `onSessionStarted(isHost)` / `onSessionEnded(remoteInitiated)` callbacks so `GameViewModel` can start/stop periodic jobs and clear session-specific state. `handleClientDisconnected()` returns a Boolean indicating whether the caller should still handle roster cleanup (true for game master, false for player).
 - `MainActivity` delegates own the camera/screen hardware (`LightsAndScreenDelegate`), the ExoPlayer (`PlaybackViewDelegate`), the GM in-game controls (`GmControlsDelegate`), and the start-screen hotspots (`StartScreenControlsDelegate`). The activity is a coordinator; `dispatchKeyEvent` is a one-line shim that forwards to `GmControlsDelegate`.
@@ -138,7 +146,8 @@ Three layers handle connectivity:
 
 ## Tests
 
-- 248 unit tests across the codebase.
+- 284 unit tests across the codebase.
+- `VideoSizeRulesTest` (plain JVM) pins the downscale decision and the target-height arithmetic; `Media3VideoNormalizerTest` (Robolectric, for `Uri` only) covers reuse, `.part` cleanup and the rejection of a conversion that came out too large. The real 8K→1080p encode itself can only be exercised on a phone that can decode 8K, i.e. the game master's.
 - `PlaybackControllerTest`, `FileTransferOrchestratorTest`, `SessionControllerTest` cover the extracted controllers without Android view bindings. `SessionControllerTest` injects a `resolveHostAddress` fake, so the session layer is testable without any Android networking.
 - `HostAddressResolverTest` and `PreparedGameStoreTest` are plain JVM (no Robolectric).
 - `GameViewModelTest` covers the remaining roster/snapshot/playlist glue and routes `NetworkEvent` events through the dispatcher to verify controller wiring.

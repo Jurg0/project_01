@@ -125,6 +125,12 @@ dependencies {
     implementation 'androidx.navigation:navigation-ui-ktx:2.7.6'
     implementation 'androidx.media3:media3-exoplayer:1.2.1'
     implementation 'androidx.media3:media3-ui:1.2.1'
+    // Downscales oversized videos on the game master's phone when a playlist is built.
+    // An 8K recording from a modern phone cannot be decoded by the older player devices
+    // at all — see VideoNormalizer.
+    implementation 'androidx.media3:media3-transformer:1.2.1'
+    implementation 'androidx.media3:media3-effect:1.2.1'
+    implementation 'androidx.media3:media3-common:1.2.1'
     implementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.2'
 
     testImplementation 'junit:junit:4.13.2'

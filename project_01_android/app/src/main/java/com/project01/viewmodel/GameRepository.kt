@@ -32,6 +32,8 @@ class GameRepository(
         java.io.File(application.filesDir, "prepared")
     ),
     val hostDiscovery: HostDiscovery = HostDiscovery(),
+    /** Shrinks oversized videos as the game master builds a playlist. See [VideoNormalizer]. */
+    val videoNormalizer: VideoNormalizer = Media3VideoNormalizer(application),
 ) {
 
     private val _players = MutableLiveData<List<Player>>()
@@ -327,6 +329,7 @@ class GameRepository(
         playlistSummary: String,
         hosting: HostingState?,
         players: List<String> = emptyList(),
+        playlistEntries: List<String> = emptyList(),
     ): DiagnosticsReport = withContext(Dispatchers.IO) {
         val interfaces = try {
             java.net.NetworkInterface.getNetworkInterfaces().toList()
@@ -395,6 +398,7 @@ class GameRepository(
             discoveredHost = discovered,
             hostReachable = reachability,
             playlistSummary = playlistSummary,
+            playlistEntries = playlistEntries,
             hosting = hosting,
             players = players,
         )

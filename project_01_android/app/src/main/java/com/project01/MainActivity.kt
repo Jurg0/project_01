@@ -51,6 +51,10 @@ class MainActivity : AppCompatActivity() {
     /** The prepared game the GM is currently editing (prepare mode); null otherwise. */
     private var editingPreparedName: String? = null
 
+    /** Held open while a picked video is being shrunk for the fleet, so the percentage can be
+     *  updated in place instead of stacking one Snackbar per poll. */
+    private var conversionSnackbar: Snackbar? = null
+
     private val openDocumentLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let {
             contentResolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -365,6 +369,23 @@ class MainActivity : AppCompatActivity() {
 
         gameViewModel.uiError.observe(this, Observer { error ->
             handleUiError(error)
+        })
+
+        // A big recording can take a while to shrink and the playlist row only appears when
+        // it's done, so without this the add button looks like it did nothing.
+        gameViewModel.conversionStatus.observe(this, Observer { status ->
+            if (status == null) {
+                conversionSnackbar?.dismiss()
+                conversionSnackbar = null
+                return@Observer
+            }
+            val existing = conversionSnackbar
+            if (existing == null) {
+                conversionSnackbar = Snackbar.make(binding.root, status, Snackbar.LENGTH_INDEFINITE)
+                    .also { it.show() }
+            } else {
+                existing.setText(status)
+            }
         })
 
         gameViewModel.requestEnableBluetooth.observe(this, Observer {

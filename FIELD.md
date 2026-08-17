@@ -43,6 +43,34 @@ on a player you get `receiving X on port N`, its size, progress every 10%, and
 `complete, NNNMB in NNs`; on the host, `sending X to <ip>`. Videos download **one at a time,
 in playlist order**, so a partly-finished pre-load still leaves the early videos ready.
 
+## Video resolution
+
+The app downscales anything over 1920x1080 when you **add it to a playlist**, on the game
+master's phone, and puts the smaller copy in the playlist. A Snackbar shows the percentage; a
+big recording takes a minute or so. Nothing happens at game time.
+
+Recording at Full HD in the first place skips that wait entirely, and is worth doing: 8K buys
+nothing on a phone screen and costs about ten times the transfer time.
+
+**Check the playlist on the phone, before the day.** Diagnostics (hold the bottom-left corner)
+now lists every entry with the resolution the players will have to decode:
+
+```
+playlist: 3 video(s), 3 on this device
+  1. 20260814_210013_1080p.mp4 — 1080x1920, 24MB, on this device
+  2. 20260812_230726.mp4 — 1920x1080, 405MB, on this device
+  3. 20260718_150016.mp4 — 7680x4320 TOO LARGE — older phones will stay blue, 215MB, on this device
+```
+
+Anything reading TOO LARGE will play on the game master's phone and show a **blue screen on
+every player**, which looks exactly like broken playback sync. That was a real field test: two
+8K clips, transfers all verified, three phones, an hour lost. Re-add the video (or save the
+prepared game again) to convert it.
+
+If the conversion fails you get the original plus a warning — take it seriously, and check the
+diagnostics line. On a player with developer mode, `adb logcat -s GamePlay:W` shows the
+playback error and `dumpsys media.metrics | grep -i codec` names the resolution that failed.
+
 ## Pre-loading videos before the day
 
 Videos are cached permanently on each player, so large playlists can be synced ahead of time:

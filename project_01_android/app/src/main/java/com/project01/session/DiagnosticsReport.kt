@@ -41,6 +41,16 @@ data class DiagnosticsReport(
     val discoveredHost: String?,
     val hostReachable: String?,
     val playlistSummary: String,
+    /**
+     * One line per playlist entry, with the resolution the player phones will have to decode
+     * and a warning on anything above 1920x1080.
+     *
+     * The game master's phone has no developer mode, so there is no adb and no logcat on the
+     * one device that builds playlists. This is the only place a video that will play on the
+     * game master and nowhere else can be spotted — which is exactly the failure that cost a
+     * field test on 2026-08-17.
+     */
+    val playlistEntries: List<String> = emptyList(),
     /** Set on the game master only; the host/probe fields below are meaningless there. */
     val hosting: HostingState? = null,
     /**
@@ -60,6 +70,7 @@ data class DiagnosticsReport(
         appendLine("role: $role")
         appendLine("state: $connectionState")
         appendLine("playlist: $playlistSummary")
+        playlistEntries.forEach { appendLine("  $it") }
         appendLine()
         appendLine("— NETWORK —")
         appendLine("wi-fi enabled: $wifiEnabled")

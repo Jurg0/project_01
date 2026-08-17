@@ -43,6 +43,11 @@ class GameViewModel(application: Application, val repository: GameRepository = G
     private val _prepareMode = MutableLiveData(false)
     val prepareMode: LiveData<Boolean> = _prepareMode
 
+    /** Progress text while an oversized video is being shrunk, or null when nothing is running.
+     *  Only ever set while the game master builds a playlist — see [prepareForFleet]. */
+    private val _conversionStatus = MutableLiveData<String?>()
+    val conversionStatus: LiveData<String?> = _conversionStatus
+
     val playbackController: PlaybackController = PlaybackController(
         gameSync = repository.gameSync,
         scope = viewModelScope,
@@ -375,8 +380,27 @@ class GameViewModel(application: Application, val repository: GameRepository = G
 
     fun getPreparedGame(name: String): PreparedGame? = repository.preparedGameStore.load(name)
 
+    /**
+     * Save a prepared game, then make sure every entry in it is something the fleet can play.
+     *
+     * The save happens first and synchronously, so "Saved" is honest even if the app dies during
+     * a conversion. The sweep afterwards catches videos that never went through [addVideo] —
+     * a game prepared by an earlier build, before oversized videos were converted at all, would
+     * otherwise keep its unplayable entries forever. Videos already inside the limits cost one
+     * metadata read each, and an entry converted on an earlier run is reused rather than
+     * re-encoded, so a save with nothing to do stays fast.
+     */
     fun prepareGame(name: String, password: String, videos: List<Video>) {
         repository.preparedGameStore.save(PreparedGame(name, password, videos.map { it.toDto() }))
+        viewModelScope.launch {
+            val prepared = videos.map { prepareForFleet(it) }
+            if (prepared == videos) return@launch
+            repository.restoreVideos(prepared)
+            repository.playlistStore.savePlaylist(PlaylistStore.LAST_USED_NAME, prepared)
+            repository.preparedGameStore.save(
+                PreparedGame(name, password, prepared.map { it.toDto() })
+            )
+        }
     }
 
     fun deletePreparedGame(name: String) = repository.preparedGameStore.delete(name)
@@ -415,6 +439,7 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         val videos = videos.value ?: emptyList()
         val local = videos.count { it.uri.scheme == "file" }
         return repository.collectDiagnostics(
+            playlistEntries = videos.mapIndexed { index, video -> describeForFleet(index, video) },
             role = if (isGameMaster()) "game master" else "player",
             connectionState = connectionState.value?.name ?: "none",
             playlistSummary = "${videos.size} video(s), $local on this device" +
@@ -430,15 +455,96 @@ class GameViewModel(application: Application, val repository: GameRepository = G
         )
     }
 
+    /**
+     * One diagnostics line for one playlist entry: what the player phones will be asked to
+     * decode, and whether that is too much for them.
+     *
+     * This is the game master's only way to check — that phone has no developer mode, so there
+     * is no logcat to read. A line ending in TOO LARGE is the difference between "the sync is
+     * broken" and "this video cannot play on half the fleet", which took a wasted field test
+     * and a laptop to tell apart once.
+     */
+    private suspend fun describeForFleet(index: Int, video: Video): String {
+        val probe = repository.videoNormalizer.resolutionOf(video.uri)
+        val megabytes = if (video.sizeBytes > 0) ", ${video.sizeBytes / 1024 / 1024}MB" else ""
+        val where = if (video.uri.scheme == "file") "on this device" else "not copied here"
+        val resolution = when {
+            probe == null -> "resolution unreadable"
+            VideoSizeRules.needsDownscale(probe.width, probe.height) ->
+                "${probe.width}x${probe.height} TOO LARGE — older phones will stay blue"
+            else -> "${probe.width}x${probe.height}"
+        }
+        return "${index + 1}. ${video.title} — $resolution$megabytes, $where"
+    }
+
     fun addVideo(uri: Uri) {
         viewModelScope.launch {
             val fileName = repository.getFileName(uri) ?: "Video ${videos.value?.size?.plus(1)}"
-            val video = Video(uri, fileName)
+            val video = prepareForFleet(Video(uri, fileName))
             val currentVideos = videos.value?.toMutableList() ?: mutableListOf()
             currentVideos.add(video)
             applyLocalVideoChange(currentVideos)
         }
     }
+
+    /**
+     * Shrink a video that the player phones cannot decode, before it enters the playlist.
+     *
+     * Deliberately here, at playlist-build time, and not at session or transfer time: the
+     * conversion is paid for once, at home, and everything downstream — saving a prepared
+     * game, the wire playlist, the file transfer — then deals only with a file the whole
+     * fleet can play. An 8K recording is the case that forced this: it played on the game
+     * master's phone and on no other device, which in the field is indistinguishable from
+     * broken playback sync.
+     *
+     * A conversion that fails does NOT block the video. The game master is the only one who
+     * knows what the fleet can cope with, so they get the original plus a warning.
+     */
+    private suspend fun prepareForFleet(video: Video): Video {
+        val fileName = video.title
+        // Elapsed time is shown as it runs and reported at the end on purpose: an 8K conversion
+        // takes as long as it takes, and the game master's phone has no adb to time it with.
+        var startedAt = 0L
+        val result = repository.videoNormalizer.normalize(video.uri, fileName) { percent ->
+            if (startedAt == 0L) startedAt = System.currentTimeMillis()
+            val elapsed = (System.currentTimeMillis() - startedAt) / 1000
+            _conversionStatus.postValue(
+                "Preparing $fileName for older phones — $percent% (${formatDuration(elapsed)})"
+            )
+        }
+        _conversionStatus.postValue(null)
+        val took = if (startedAt == 0L) "" else
+            " in ${formatDuration((System.currentTimeMillis() - startedAt) / 1000)}"
+        return when (result) {
+            // Return the entry as it was, so a known file size survives.
+            is NormalizeResult.Unchanged -> video
+            is NormalizeResult.Converted -> {
+                if (!result.reused) {
+                    _uiError.postValue(
+                        UiError.Informational(
+                            "$fileName was ${result.fromWidth}x${result.fromHeight} — added a " +
+                                "${result.toWidth}x${result.toHeight} copy$took so every phone " +
+                                "can play it"
+                        )
+                    )
+                }
+                result.video
+            }
+            is NormalizeResult.Failed -> {
+                _uiError.postValue(
+                    UiError.Recoverable(
+                        "$fileName is ${result.width}x${result.height} and could not be " +
+                            "shrunk (${result.reason}). Older phones may show a blue screen instead."
+                    )
+                )
+                video
+            }
+        }
+    }
+
+    /** "45s" / "3m12s" — short enough for a Snackbar. */
+    private fun formatDuration(seconds: Long): String =
+        if (seconds < 60) "${seconds}s" else "${seconds / 60}m${seconds % 60}s"
 
     /** Apply a local (user-driven) playlist change: store in-memory, auto-save, broadcast. */
     private suspend fun applyLocalVideoChange(newList: List<Video>) {
